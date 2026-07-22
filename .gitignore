@@ -1,0 +1,15 @@
+# Never commit real ticket data or DB — contains internal ticket content.
+tickets.db
+tickets.db-journal
+*.db
+*.db-journal
+
+# Raw export / working files, not needed to run the CMS app.
+*.xlsx
+*.json
+testwrite.tmp
+README.md.bak
+.DS_Store
+.fuse_hidden*
+__pycache__/
+*.pyc
