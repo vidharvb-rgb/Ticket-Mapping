@@ -529,6 +529,9 @@ INDEX_HTML = r"""<!DOCTYPE html>
                 border-radius:14px; padding:18px; flex:1 1 380px; box-shadow: 0 10px 30px -12px rgba(0,0,0,.5); }
   .chart-card h3 { margin:0 0 12px; font-size:13px; color:var(--muted); text-transform:uppercase; letter-spacing:.4px; }
   .chart-card canvas { max-height:280px; }
+  .stitle { font-size:11.5px; font-weight:700; color:var(--muted); text-transform:uppercase;
+            letter-spacing:.6px; margin:4px 0 12px; padding-top:16px; border-top:1px solid var(--border); }
+  .stitle:first-child { padding-top:0; border-top:none; }
   .convLink { background:none; border:none; color:var(--accent); font-size:11.5px; cursor:pointer;
               padding:0; text-decoration:none; font-weight:600; }
   .convLink:hover { text-decoration:underline; }
@@ -701,7 +704,7 @@ function drawSpocRows(){
       <td class="subj">${esc(t.subject)}<br>
         <a class="tlink" href="${t.web_url||'#'}" target="_blank">Open in Zoho &rarr;</a>
         &nbsp;|&nbsp;
-        <button class="convLink" onclick="openConversation('${t.id}', ${JSON.stringify(t.subject)})">View conversation</button>
+        <button class="convLink" onclick="openConversation('${t.id}')">View conversation</button>
       </td>
       <td>${locked ? esc(t.tag_module||t.spoc_tag_module||'') : fieldInput(t.id,'module', t.spoc_tag_module, t.sugg_module)}</td>
       <td>${locked ? esc(t.tag_feature||t.spoc_tag_feature||'') : fieldInput(t.id,'feature', t.spoc_tag_feature, t.sugg_feature)}</td>
@@ -735,6 +738,10 @@ async function spocSave(id, action){
 let ADMIN_TAB = 'queue';
 let chartSpocInstance = null;
 let chartAccuracyInstance = null;
+let chartStatusInstance = null;
+let chartPriorityInstance = null;
+let chartTypeInstance = null;
+let chartTrendInstance = null;
 
 function renderAdmin(){
   document.getElementById('app').innerHTML = `
@@ -789,8 +796,20 @@ function renderAdminQueue(){
   drawAdminRows();
 }
 
+function sectionTitle(text){
+  return `<div class="stitle">${text}</div>`;
+}
+
 function renderAdminDashboard(){
   const total = TICKETS.length;
+  const open = TICKETS.filter(t => t.status === 'Open').length;
+  const inProgress = TICKETS.filter(t => t.status === 'In Progress').length;
+  const clarity = TICKETS.filter(t => t.status === 'Clarity Required').length;
+  const reopened = TICKETS.filter(t => t.status === 'Re-open').length;
+  const completed = TICKETS.filter(t => t.status === 'Completed').length;
+  const highRisk = TICKETS.filter(t => t.status !== 'Completed' &&
+    (t.priority === 'Blocker' || t.priority === 'Highest' || t.priority === 'High')).length;
+
   const tagged = TICKETS.filter(t => t.workflow_status === 'Submitted' || t.workflow_status === 'Approved').length;
   const approved = TICKETS.filter(t => t.workflow_status === 'Approved').length;
   const pendingReview = TICKETS.filter(t => t.workflow_status === 'Submitted').length;
@@ -798,8 +817,38 @@ function renderAdminDashboard(){
   const rateStr = v => (v === null || v === undefined) ? '&mdash;' : `${v}%`;
 
   document.getElementById('adminTabContent').innerHTML = `
+    ${sectionTitle('Ticket overview')}
     <div class="kpis">
       <div class="kpi"><div class="num">${total}</div><div class="label">Total tickets</div></div>
+      <div class="kpi"><div class="num">${open}</div><div class="label">Open</div></div>
+      <div class="kpi"><div class="num">${inProgress}</div><div class="label">In progress</div></div>
+      <div class="kpi"><div class="num">${clarity + reopened}</div><div class="label">Clarity / re-open</div></div>
+      <div class="kpi"><div class="num">${completed}</div><div class="label">Completed</div></div>
+      <div class="kpi"><div class="num">${highRisk}</div><div class="label">High/Blocker &amp; open</div></div>
+    </div>
+    <div class="charts-row">
+      <div class="chart-card">
+        <h3>Status breakdown</h3>
+        <canvas id="chartStatus"></canvas>
+      </div>
+      <div class="chart-card">
+        <h3>Priority breakdown</h3>
+        <canvas id="chartPriority"></canvas>
+      </div>
+    </div>
+    <div class="charts-row">
+      <div class="chart-card">
+        <h3>Ticket type breakdown</h3>
+        <canvas id="chartType"></canvas>
+      </div>
+      <div class="chart-card">
+        <h3>Tickets created by month</h3>
+        <canvas id="chartTrend"></canvas>
+      </div>
+    </div>
+
+    ${sectionTitle('Tagging progress')}
+    <div class="kpis">
       <div class="kpi"><div class="num">${tagged}</div><div class="label">Tagged by SPOCs</div></div>
       <div class="kpi"><div class="num">${approved}</div><div class="label">Approved</div></div>
       <div class="kpi"><div class="num">${pendingReview}</div><div class="label">Awaiting your review</div></div>
@@ -825,9 +874,107 @@ function drawAdminCharts(){
 
   const chartTextColor = '#9aa1b8';
   const gridColor = 'rgba(154,161,184,.12)';
-  const palette = ['#7c8cff', '#b06dfc', '#3ecf8e', '#f2b84b', '#f2604b'];
+  const palette = ['#7c8cff', '#b06dfc', '#3ecf8e', '#f2b84b', '#f2604b', '#4bd0f2', '#f24b9e'];
 
-  // --- Chart 1: tagged vs total per SPOC ---
+  // --- Chart: status breakdown (doughnut) ---
+  const statusCounts = {};
+  TICKETS.forEach(t => { const k = t.status || 'Unknown'; statusCounts[k] = (statusCounts[k]||0)+1; });
+  if (chartStatusInstance) chartStatusInstance.destroy();
+  const ctxStatus = document.getElementById('chartStatus');
+  if (ctxStatus) {
+    chartStatusInstance = new Chart(ctxStatus, {
+      type: 'doughnut',
+      data: {
+        labels: Object.keys(statusCounts),
+        datasets: [{ data: Object.values(statusCounts), backgroundColor: palette, borderColor: '#161a26', borderWidth: 2 }]
+      },
+      options: {
+        responsive: true,
+        plugins: { legend: { position: 'bottom', labels: { color: chartTextColor, boxWidth: 12, padding: 10 } } }
+      }
+    });
+  }
+
+  // --- Chart: priority breakdown (bar) ---
+  const priorityOrder = ['Highest', 'Blocker', 'High', 'Moderate', 'Normal', '-None-'];
+  const priorityCounts = {};
+  TICKETS.forEach(t => { const k = t.priority || 'Unknown'; priorityCounts[k] = (priorityCounts[k]||0)+1; });
+  const priorityLabels = priorityOrder.filter(p => priorityCounts[p]).concat(Object.keys(priorityCounts).filter(p => !priorityOrder.includes(p)));
+  if (chartPriorityInstance) chartPriorityInstance.destroy();
+  const ctxPriority = document.getElementById('chartPriority');
+  if (ctxPriority) {
+    chartPriorityInstance = new Chart(ctxPriority, {
+      type: 'bar',
+      data: {
+        labels: priorityLabels,
+        datasets: [{ label: 'Tickets', data: priorityLabels.map(p => priorityCounts[p]||0), backgroundColor: '#f2604b', borderRadius: 6 }]
+      },
+      options: {
+        responsive: true,
+        plugins: { legend: { display: false } },
+        scales: {
+          x: { ticks: { color: chartTextColor }, grid: { display: false } },
+          y: { ticks: { color: chartTextColor }, grid: { color: gridColor }, beginAtZero: true }
+        }
+      }
+    });
+  }
+
+  // --- Chart: ticket type breakdown (bar) ---
+  const typeCounts = {};
+  TICKETS.forEach(t => { const k = t.cf_type_of_task || 'Unspecified'; typeCounts[k] = (typeCounts[k]||0)+1; });
+  const typeLabels = Object.keys(typeCounts).sort((a,b) => typeCounts[b]-typeCounts[a]);
+  if (chartTypeInstance) chartTypeInstance.destroy();
+  const ctxType = document.getElementById('chartType');
+  if (ctxType) {
+    chartTypeInstance = new Chart(ctxType, {
+      type: 'bar',
+      data: {
+        labels: typeLabels,
+        datasets: [{ label: 'Tickets', data: typeLabels.map(l => typeCounts[l]), backgroundColor: '#7c8cff', borderRadius: 6 }]
+      },
+      options: {
+        indexAxis: 'y',
+        responsive: true,
+        plugins: { legend: { display: false } },
+        scales: {
+          x: { ticks: { color: chartTextColor }, grid: { color: gridColor }, beginAtZero: true },
+          y: { ticks: { color: chartTextColor }, grid: { display: false } }
+        }
+      }
+    });
+  }
+
+  // --- Chart: tickets created by month (line) ---
+  const monthCounts = {};
+  TICKETS.forEach(t => {
+    if (!t.created_time) return;
+    const m = t.created_time.slice(0, 7);
+    monthCounts[m] = (monthCounts[m]||0)+1;
+  });
+  const months = Object.keys(monthCounts).sort();
+  if (chartTrendInstance) chartTrendInstance.destroy();
+  const ctxTrend = document.getElementById('chartTrend');
+  if (ctxTrend) {
+    chartTrendInstance = new Chart(ctxTrend, {
+      type: 'line',
+      data: {
+        labels: months,
+        datasets: [{ label: 'Created', data: months.map(m => monthCounts[m]), borderColor: '#b06dfc',
+          backgroundColor: 'rgba(176,109,252,.18)', fill: true, tension: .3, pointRadius: 3 }]
+      },
+      options: {
+        responsive: true,
+        plugins: { legend: { display: false } },
+        scales: {
+          x: { ticks: { color: chartTextColor }, grid: { display: false } },
+          y: { ticks: { color: chartTextColor }, grid: { color: gridColor }, beginAtZero: true }
+        }
+      }
+    });
+  }
+
+  // --- Chart: tagged vs total per SPOC ---
   const spocs = [...new Set(TICKETS.map(t => t.cf_task_spoc_name))].sort();
   const totals = spocs.map(s => TICKETS.filter(t => t.cf_task_spoc_name === s).length);
   const taggedCounts = spocs.map(s => TICKETS.filter(t => t.cf_task_spoc_name === s &&
@@ -931,7 +1078,7 @@ function drawAdminRows(){
       <td class="subj">${esc(t.subject)}<br>
         <a class="tlink" href="${t.web_url||'#'}" target="_blank">Open in Zoho &rarr;</a>
         &nbsp;|&nbsp;
-        <button class="convLink" onclick="openConversation('${t.id}', ${JSON.stringify(t.subject)})">View conversation</button>
+        <button class="convLink" onclick="openConversation('${t.id}')">View conversation</button>
       </td>
       <td>${fieldInput(t.id,'module', t.spoc_tag_module, t.sugg_module)}</td>
       <td>${fieldInput(t.id,'feature', t.spoc_tag_feature, t.sugg_feature)}</td>
@@ -983,9 +1130,10 @@ async function refreshStats(){
 }
 
 // ---------------- CONVERSATION MODAL ----------------
-async function openConversation(ticketId, subject){
+async function openConversation(ticketId){
+  const t = TICKETS.find(x => x.id === ticketId);
   const overlay = document.getElementById('convOverlay');
-  document.getElementById('convTitle').textContent = subject || 'Conversation';
+  document.getElementById('convTitle').textContent = (t && t.subject) || 'Conversation';
   document.getElementById('convSub').textContent = 'Loading...';
   document.getElementById('convBody').innerHTML = '';
   overlay.classList.add('open');
