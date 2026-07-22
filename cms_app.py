@@ -529,6 +529,30 @@ INDEX_HTML = r"""<!DOCTYPE html>
                 border-radius:14px; padding:18px; flex:1 1 380px; box-shadow: 0 10px 30px -12px rgba(0,0,0,.5); }
   .chart-card h3 { margin:0 0 12px; font-size:13px; color:var(--muted); text-transform:uppercase; letter-spacing:.4px; }
   .chart-card canvas { max-height:280px; }
+  .convLink { background:none; border:none; color:var(--accent); font-size:11.5px; cursor:pointer;
+              padding:0; text-decoration:none; font-weight:600; }
+  .convLink:hover { text-decoration:underline; }
+  .modalOverlay { display:none; position:fixed; inset:0; background:rgba(6,7,12,.72);
+                  z-index:50; align-items:center; justify-content:center; padding:24px; }
+  .modalOverlay.open { display:flex; }
+  .modalBox { background: linear-gradient(180deg, var(--card2), var(--card)); border:1px solid var(--border);
+              border-radius:14px; width:100%; max-width:680px; max-height:82vh; display:flex;
+              flex-direction:column; box-shadow: 0 20px 60px -16px rgba(0,0,0,.7); }
+  .modalHead { padding:16px 20px; border-bottom:1px solid var(--border); display:flex;
+               justify-content:space-between; align-items:flex-start; gap:12px; }
+  .modalHead h2 { margin:0 0 4px; font-size:14.5px; }
+  .modalHead .sub { color:var(--muted); font-size:11.5px; }
+  .modalClose { background:#232838; border:none; color:var(--text); width:28px; height:28px;
+                border-radius:8px; cursor:pointer; font-size:14px; flex-shrink:0; }
+  .modalClose:hover { background:#2c3348; }
+  .modalBody { padding:16px 20px; overflow:auto; }
+  .comment { border:1px solid var(--border); border-radius:10px; padding:10px 12px; margin-bottom:10px;
+             background: rgba(255,255,255,.02); }
+  .comment .who { display:flex; justify-content:space-between; gap:10px; font-size:11.5px;
+                  color:var(--muted); margin-bottom:6px; }
+  .comment .who .name { color:var(--text); font-weight:700; }
+  .comment .body { font-size:12.5px; white-space:pre-wrap; line-height:1.5; }
+  .modalEmpty { color:var(--muted); font-size:12.5px; text-align:center; padding:30px 0; }
 </style>
 </head>
 <body>
@@ -545,6 +569,19 @@ INDEX_HTML = r"""<!DOCTYPE html>
 </div>
 
 <div id="app"></div>
+
+<div class="modalOverlay" id="convOverlay" onclick="if(event.target===this) closeConversation()">
+  <div class="modalBox">
+    <div class="modalHead">
+      <div>
+        <h2 id="convTitle">Conversation</h2>
+        <div class="sub" id="convSub"></div>
+      </div>
+      <button class="modalClose" onclick="closeConversation()">&#10005;</button>
+    </div>
+    <div class="modalBody" id="convBody"></div>
+  </div>
+</div>
 
 <script>
 let ME = null;
@@ -661,7 +698,11 @@ function drawSpocRows(){
     const bucket = spocBucket(t);
     const locked = bucket === 'Tagged';
     return `<tr data-id="${t.id}">
-      <td class="subj">${esc(t.subject)}<br><a class="tlink" href="${t.web_url||'#'}" target="_blank">Open in Zoho &rarr;</a></td>
+      <td class="subj">${esc(t.subject)}<br>
+        <a class="tlink" href="${t.web_url||'#'}" target="_blank">Open in Zoho &rarr;</a>
+        &nbsp;|&nbsp;
+        <button class="convLink" onclick="openConversation('${t.id}', ${JSON.stringify(t.subject)})">View conversation</button>
+      </td>
       <td>${locked ? esc(t.tag_module||t.spoc_tag_module||'') : fieldInput(t.id,'module', t.spoc_tag_module, t.sugg_module)}</td>
       <td>${locked ? esc(t.tag_feature||t.spoc_tag_feature||'') : fieldInput(t.id,'feature', t.spoc_tag_feature, t.sugg_feature)}</td>
       <td>${locked ? esc(t.tag_ticket_type||t.spoc_tag_ticket_type||'') : fieldInput(t.id,'ticket_type', t.spoc_tag_ticket_type, t.sugg_ticket_type)}</td>
@@ -887,7 +928,11 @@ function drawAdminRows(){
     const locked = t.workflow_status === 'Approved';
     return `<tr data-id="${t.id}">
       <td>${esc(t.cf_task_spoc_name)}</td>
-      <td class="subj">${esc(t.subject)}<br><a class="tlink" href="${t.web_url||'#'}" target="_blank">Open in Zoho &rarr;</a></td>
+      <td class="subj">${esc(t.subject)}<br>
+        <a class="tlink" href="${t.web_url||'#'}" target="_blank">Open in Zoho &rarr;</a>
+        &nbsp;|&nbsp;
+        <button class="convLink" onclick="openConversation('${t.id}', ${JSON.stringify(t.subject)})">View conversation</button>
+      </td>
       <td>${fieldInput(t.id,'module', t.spoc_tag_module, t.sugg_module)}</td>
       <td>${fieldInput(t.id,'feature', t.spoc_tag_feature, t.sugg_feature)}</td>
       <td>${fieldInput(t.id,'ticket_type', t.spoc_tag_ticket_type, t.sugg_ticket_type)}</td>
@@ -936,6 +981,52 @@ async function refreshStats(){
   const sr = await fetch('/api/admin/stats');
   STATS = await sr.json();
 }
+
+// ---------------- CONVERSATION MODAL ----------------
+async function openConversation(ticketId, subject){
+  const overlay = document.getElementById('convOverlay');
+  document.getElementById('convTitle').textContent = subject || 'Conversation';
+  document.getElementById('convSub').textContent = 'Loading...';
+  document.getElementById('convBody').innerHTML = '';
+  overlay.classList.add('open');
+
+  try {
+    const r = await fetch(`/api/comments/${encodeURIComponent(ticketId)}`);
+    const data = await r.json();
+    if (!r.ok || data.error) {
+      document.getElementById('convSub').textContent = '';
+      document.getElementById('convBody').innerHTML =
+        `<div class="modalEmpty">${esc(data.error || 'Could not load this conversation.')}</div>`;
+      return;
+    }
+    const comments = data.comments || [];
+    document.getElementById('convSub').textContent = `${comments.length} message${comments.length===1?'':'s'}`;
+    if (!comments.length) {
+      document.getElementById('convBody').innerHTML = '<div class="modalEmpty">No comments on this ticket yet.</div>';
+      return;
+    }
+    document.getElementById('convBody').innerHTML = comments.map(c => `
+      <div class="comment">
+        <div class="who">
+          <span><span class="name">${esc(c.commenter_name || 'Unknown')}</span> &middot; ${esc(c.commenter_type || c.commenter_role || '')}</span>
+          <span>${esc(c.commented_time || '')}</span>
+        </div>
+        <div class="body">${esc(c.content_text || '')}</div>
+      </div>
+    `).join('');
+  } catch (e) {
+    document.getElementById('convSub').textContent = '';
+    document.getElementById('convBody').innerHTML = '<div class="modalEmpty">Could not load this conversation.</div>';
+  }
+}
+
+function closeConversation(){
+  document.getElementById('convOverlay').classList.remove('open');
+}
+
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') closeConversation();
+});
 
 boot();
 </script>
