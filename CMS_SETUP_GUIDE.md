@@ -9,6 +9,8 @@
 - **You (admin, vidharv.b@meritto.com)** see every submitted ticket across all three, can edit any field, and click **Approve** — that's the only thing that writes into the final `tag_module` / `tag_feature` / etc. columns (the "Confirmed" columns the main dashboard already reads). Nothing is final until you approve it.
 - Every ticket also carries `workflow_status` (`Untagged` → `Draft` → `Submitted` → `Approved`) plus `submitted_by`/`approved_by`/timestamps, so nothing gets lost the way it did in Excel.
 - Scope: the same 1,291 tickets already covered by the tagging dashboard. The 66 tickets I'd already confidently tagged earlier are seeded in as pre-approved; the other 1,225 start `Untagged` with your existing "suggested" values shown as placeholder hints in each field.
+- **SPOCs never see the approval process.** For Perugu, Ajitesh, and Mansi, a ticket's journey is just Untagged → Draft → **Tagged** — the moment they submit, it's out of their hands. Their browser is never even sent `approved_by`, `approved_at`, `accuracy_flag`, or whether a ticket is `Submitted` vs `Approved` — that data is stripped server-side, not just hidden in the UI, so it's not visible even via browser dev tools.
+- **Admin dashboard tab.** Your view now has two tabs: **Approval Queue** (the working table, unchanged) and **Dashboard** — top-line metrics (total tickets, tagged, approved, awaiting review, overall accuracy %) plus two charts: a per-SPOC "tagged vs total" bar chart and an accuracy breakdown donut (Correct / Corrected / Admin-tagged / legacy pre-tagged).
 
 ## One important limitation to know about
 
@@ -48,45 +50,62 @@ To add/remove people later, just edit that dict — no redeploy of anything else
 
 Since you already have a Client ID, double check in Google Cloud Console → APIs & Services → Credentials → your OAuth client → **Authorized JavaScript origins** includes `http://localhost:5051`. If it only lists a different port/origin, the sign-in button will fail with a console error (`origin_mismatch`) — just add `http://localhost:5051` there and save.
 
-## Deploying to PythonAnywhere (free tier)
+## Deploying to PythonAnywhere via GitHub
 
-I can't create the account or click through their signup for you — that step needs to be done by you directly. Everything after that (uploading files, config) you can do yourself in ~15 minutes:
+A local git repo has already been set up in this folder containing only what's safe to publish: `cms_app.py`, `CMS_SETUP_GUIDE.md`, and `.gitignore`. **`tickets.db` is deliberately excluded** (it has real ticket subjects/descriptions in it) — you upload that one file separately, not through git.
 
-1. **Sign up** at pythonanywhere.com — choose the free "Beginner" account. This gives you `<yourusername>.pythonanywhere.com` with HTTPS out of the box.
+Creating the GitHub repo and pushing needs your own GitHub login, so that part is on you; everything else you can copy-paste.
 
-2. **Upload the two files.** In the PythonAnywhere dashboard, go to the **Files** tab and upload `cms_app.py` and `tickets.db` into your home directory (e.g. `/home/<yourusername>/tickets/`).
+**1. Create the GitHub repo (private).**
+On github.com → New repository → name it e.g. `ticket-cms` → **Private** → do *not* initialize with a README (this folder already has a commit).
 
-3. **Install dependencies.** Open a **Bash console** (Consoles tab → Bash) and run:
-   ```bash
-   pip3.10 install --user flask google-auth
-   ```
-   (use whichever Python version the console shows; free tier defaults to 3.10).
+**2. Push from this folder.**
+```bash
+cd /path/to/Tickets
+git remote add origin https://github.com/<your-username>/ticket-cms.git
+git branch -M main
+git push -u origin main
+```
+(Use a GitHub personal access token as the password if it prompts — GitHub retired plain password pushes.)
 
-4. **Create the web app.** Go to the **Web** tab → **Add a new web app** → pick "Manual configuration" (not the Flask wizard) → pick the same Python version.
+**3. Sign up at PythonAnywhere** — free "Beginner" account. Gives you `<yourusername>.pythonanywhere.com` with HTTPS out of the box.
 
-5. **Point it at your code.** Open the generated **WSGI configuration file** (linked on the Web tab) and replace its contents with:
-   ```python
-   import sys
-   path = '/home/<yourusername>/tickets'
-   if path not in sys.path:
-       sys.path.insert(0, path)
+**4. Clone the repo.** Open a **Bash console** (Consoles tab → Bash):
+```bash
+git clone https://github.com/<your-username>/ticket-cms.git
+cd ticket-cms
+pip3.10 install --user flask google-auth
+```
 
-   from cms_app import app as application
-   ```
+**5. Upload `tickets.db` separately.** Files tab → upload `tickets.db` into that same `ticket-cms` folder (not via git).
 
-6. **Set a fixed secret key.** On the Web tab, under "Environment variables," add `CMS_SECRET_KEY` with any long random string (otherwise everyone gets logged out whenever the app restarts). `cms_app.py` already reads this via `os.environ.get("CMS_SECRET_KEY", ...)` — no code change needed.
+**6. Create the web app.** Web tab → **Add a new web app** → "Manual configuration" (not the Flask wizard) → same Python version as step 4.
 
-7. **Reload the app** (green button, top of the Web tab).
+**7. Point it at your code.** Open the generated **WSGI configuration file** (linked on the Web tab) and replace its contents with:
+```python
+import sys
+path = '/home/<yourusername>/ticket-cms'
+if path not in sys.path:
+    sys.path.insert(0, path)
 
-8. **Add the origin to Google.** In Google Cloud Console → APIs & Services → Credentials → your OAuth client → Authorized JavaScript origins, add:
-   ```
-   https://<yourusername>.pythonanywhere.com
-   ```
-   Save — Google can take a few minutes to propagate this.
+from cms_app import app as application
+```
 
-9. Send everyone `https://<yourusername>.pythonanywhere.com` to sign in with their Meritto Google account.
+**8. Set a fixed secret key.** Web tab → Environment variables → add `CMS_SECRET_KEY` with any long random string (otherwise everyone gets logged out whenever the app restarts). `cms_app.py` already reads this via `os.environ.get("CMS_SECRET_KEY", ...)` — no code change needed.
 
-Note: PythonAnywhere's free tier restricts outbound requests to an allowlist, but `accounts.google.com` / `oauth2.googleapis.com` (used to verify the sign-in token) are on that allowlist by default, so login will work without extra config.
+**9. Reload the app** (green button, top of the Web tab).
+
+**10. Add the origin to Google.** Google Cloud Console → APIs & Services → Credentials → your OAuth client → Authorized JavaScript origins → add:
+```
+https://<yourusername>.pythonanywhere.com
+```
+Save — can take a few minutes to propagate.
+
+**11.** Send everyone `https://<yourusername>.pythonanywhere.com` to sign in with their Meritto Google account.
+
+**Updating the code later:** edit locally, `git commit` + `git push`, then on PythonAnywhere `git pull` inside the `ticket-cms` folder and hit Reload on the Web tab. `tickets.db` stays put since it's never part of the repo.
+
+Note: PythonAnywhere's free tier restricts outbound requests to an allowlist, but `accounts.google.com` / `oauth2.googleapis.com` (used to verify the sign-in token) and `github.com` (for cloning) are on that allowlist by default, so this all works without extra config.
 
 ## If you later move this to a shared server
 

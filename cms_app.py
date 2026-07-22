@@ -203,12 +203,29 @@ def api_tickets():
             f"SELECT {TICKET_COLS} FROM tickets WHERE cf_task_spoc_name = ?",
             (user["name"],),
         ).fetchall()
+        tickets = [_scrub_for_spoc(dict(r)) for r in rows]
     else:
         rows = db.execute(
             f"""SELECT {TICKET_COLS} FROM tickets
                 WHERE cf_task_spoc_name IN ('Perugu Govardhan','Ajitesh Das','Mansi Gupta')"""
         ).fetchall()
-    return jsonify(tickets=[dict(r) for r in rows])
+        tickets = [dict(r) for r in rows]
+    return jsonify(tickets=tickets)
+
+
+# SPOCs should never learn that an admin reviewed/approved/corrected a ticket
+# — for them the journey ends the moment they submit. We collapse
+# Submitted/Approved into a single "Tagged" bucket and drop the
+# approval-only columns entirely, so this isn't just a UI hide: it's not in
+# the payload their browser receives at all.
+def _scrub_for_spoc(t):
+    if t.get("workflow_status") in ("Submitted", "Approved"):
+        t["workflow_status"] = "Tagged"
+    for key in ("approved_by", "approved_at", "accuracy_flag", "corrected_fields",
+                "submitted_module", "submitted_feature", "submitted_ticket_type",
+                "submitted_case", "submitted_status"):
+        t.pop(key, None)
+    return t
 
 
 @app.get("/api/comments/<ticket_id>")
@@ -434,46 +451,84 @@ INDEX_HTML = r"""<!DOCTYPE html>
 <meta charset="UTF-8">
 <title>Ticket Tagging CMS</title>
 <script src="https://accounts.google.com/gsi/client" async defer></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.4/chart.umd.min.js"></script>
 <style>
-  :root { --bg:#0f1117; --card:#181b24; --border:#2a2e3a; --text:#e6e8ee; --muted:#9aa0ae;
-          --accent:#6d8dfc; --confirmed:#3ecf8e; --suggested:#f2b84b; --draft:#8a6df0; --danger:#f2604b; }
+  :root {
+    --bg:#0b0d14; --bg2:#0f1220; --card:#161a26; --card2:#1b2032; --border:#2a2f42;
+    --text:#eef0f7; --muted:#9aa1b8;
+    --accent:#7c8cff; --accent2:#b06dfc; --confirmed:#3ecf8e; --suggested:#f2b84b;
+    --draft:#8a6df0; --danger:#f2604b;
+    --grad: linear-gradient(90deg, var(--accent), var(--accent2));
+  }
   * { box-sizing: border-box; }
   body { margin:0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-         background: var(--bg); color: var(--text); }
-  .topbar { display:flex; justify-content:space-between; align-items:center; padding:14px 24px;
-            border-bottom:1px solid var(--border); }
-  .topbar h1 { font-size:16px; margin:0; }
+         background:
+           radial-gradient(1200px 500px at 15% -10%, rgba(124,140,255,.14), transparent 60%),
+           radial-gradient(1000px 500px at 100% 0%, rgba(176,109,252,.12), transparent 55%),
+           var(--bg);
+         color: var(--text); min-height:100vh; }
+  .topbar { display:flex; justify-content:space-between; align-items:center; padding:16px 26px;
+            border-bottom:1px solid var(--border); position:relative;
+            background: linear-gradient(180deg, rgba(124,140,255,.06), transparent); }
+  .topbar::after { content:''; position:absolute; left:0; right:0; bottom:-1px; height:2px;
+            background: var(--grad); opacity:.8; }
+  .topbar h1 { font-size:17px; margin:0; letter-spacing:.2px; display:flex; align-items:center; gap:9px; }
+  .topbar h1::before { content:'\1F3F7'; font-size:16px; filter: drop-shadow(0 0 6px rgba(124,140,255,.6)); }
   .who { font-size:12.5px; color:var(--muted); display:flex; gap:12px; align-items:center; }
-  #app { padding:24px; display:none; }
+  #app { padding:26px; display:none; max-width:1400px; margin:0 auto; }
   #loginScreen { display:flex; flex-direction:column; align-items:center; justify-content:center;
                  height:80vh; gap:16px; }
   #loginScreen p { color:var(--muted); font-size:13px; }
   .err { color:var(--danger); font-size:13px; }
-  .card { background: var(--card); border:1px solid var(--border); border-radius:10px; padding:16px; margin-bottom:18px;}
-  .kpis { display:flex; gap:14px; flex-wrap:wrap; margin-bottom:18px; }
-  .kpi { background: var(--card); border:1px solid var(--border); border-radius:10px; padding:12px 18px; min-width:120px; }
-  .kpi .num { font-size:22px; font-weight:700; }
-  .kpi .label { color:var(--muted); font-size:11.5px; margin-top:2px; }
+  .card { background: linear-gradient(180deg, var(--card2), var(--card));
+          border:1px solid var(--border); border-radius:14px; padding:18px; margin-bottom:20px;
+          box-shadow: 0 10px 30px -12px rgba(0,0,0,.5); }
+  .kpis { display:flex; gap:14px; flex-wrap:wrap; margin-bottom:20px; }
+  .kpi { background: linear-gradient(160deg, var(--card2), var(--card)); border:1px solid var(--border);
+         border-radius:12px; padding:14px 20px; min-width:130px; position:relative; overflow:hidden;
+         box-shadow: 0 8px 22px -14px rgba(0,0,0,.6); }
+  .kpi::before { content:''; position:absolute; left:0; top:0; bottom:0; width:3px; background: var(--grad); }
+  .kpi .num { font-size:24px; font-weight:800; background: var(--grad); -webkit-background-clip:text;
+              background-clip:text; color:transparent; }
+  .kpi .label { color:var(--muted); font-size:11.5px; margin-top:3px; text-transform:uppercase; letter-spacing:.4px; }
   table { width:100%; border-collapse: collapse; font-size:12.5px; }
-  th, td { text-align:left; padding:8px 10px; border-bottom:1px solid var(--border); vertical-align:top; }
-  th { color: var(--muted); font-weight:600; position:sticky; top:0; background:var(--card); }
+  th, td { text-align:left; padding:9px 10px; border-bottom:1px solid var(--border); vertical-align:top; }
+  th { color: var(--muted); font-weight:700; position:sticky; top:0; background:var(--card2);
+       text-transform:uppercase; font-size:10.5px; letter-spacing:.4px; }
+  tbody tr { transition: background .15s ease; }
+  tbody tr:hover { background: rgba(124,140,255,.06); }
   .subj { max-width:280px; }
-  input[type=text], select { background:#11131b; color:var(--text); border:1px solid var(--border);
-         border-radius:6px; padding:5px 8px; font-size:12px; width:150px; }
-  .badge { padding:2px 8px; border-radius:12px; font-size:10.5px; font-weight:600; white-space:nowrap; }
+  input[type=text], select { background:#0e111b; color:var(--text); border:1px solid var(--border);
+         border-radius:7px; padding:6px 9px; font-size:12px; width:150px; transition: border-color .15s ease; }
+  input[type=text]:focus, select:focus { outline:none; border-color: var(--accent); }
+  .badge { padding:3px 10px; border-radius:20px; font-size:10.5px; font-weight:700; white-space:nowrap;
+           letter-spacing:.2px; }
   .badge.Untagged { background: rgba(154,160,174,.15); color: var(--muted); }
-  .badge.Draft { background: rgba(138,109,240,.15); color: var(--draft); }
-  .badge.Submitted { background: rgba(242,184,75,.15); color: var(--suggested); }
-  .badge.Approved { background: rgba(62,207,142,.15); color: var(--confirmed); }
-  .btn { background: var(--accent); color:#fff; border:none; border-radius:6px; padding:6px 12px;
-         font-size:12px; cursor:pointer; }
-  .btn.secondary { background:#2a2e3a; }
-  .btn.approve { background: var(--confirmed); color:#062; }
-  .btn:disabled { opacity:.4; cursor:not-allowed; }
+  .badge.Draft { background: rgba(138,109,240,.18); color: var(--draft); }
+  .badge.Submitted { background: rgba(242,184,75,.18); color: var(--suggested); }
+  .badge.Approved { background: rgba(62,207,142,.18); color: var(--confirmed); }
+  .badge.Tagged { background: rgba(62,207,142,.18); color: var(--confirmed); }
+  .btn { background: var(--grad); color:#fff; border:none; border-radius:8px; padding:7px 14px;
+         font-size:12px; cursor:pointer; font-weight:600; transition: transform .12s ease, box-shadow .12s ease; }
+  .btn:hover { transform: translateY(-1px); box-shadow: 0 6px 16px -6px rgba(124,140,255,.6); }
+  .btn.secondary { background:#232838; }
+  .btn.secondary:hover { box-shadow: 0 6px 16px -6px rgba(0,0,0,.5); }
+  .btn.approve { background: linear-gradient(90deg, var(--confirmed), #2fb87b); color:#04231a; }
+  .btn:disabled { opacity:.4; cursor:not-allowed; transform:none; box-shadow:none; }
   .rowActions { display:flex; gap:6px; flex-wrap:wrap; }
-  .filters { display:flex; gap:10px; margin-bottom:12px; flex-wrap:wrap; }
+  .filters { display:flex; gap:10px; margin-bottom:14px; flex-wrap:wrap; }
   .hint { color:var(--muted); font-size:11.5px; margin-top:2px; }
   a.tlink { color: var(--accent); text-decoration:none; font-size:11.5px; }
+  .tabs { display:flex; gap:6px; margin-bottom:20px; border-bottom:1px solid var(--border); }
+  .tab { padding:10px 16px; font-size:13px; font-weight:600; color:var(--muted); cursor:pointer;
+         border-bottom:2px solid transparent; margin-bottom:-1px; transition: color .15s ease; }
+  .tab:hover { color: var(--text); }
+  .tab.active { color: var(--text); border-bottom-color: var(--accent); }
+  .charts-row { display:flex; gap:18px; flex-wrap:wrap; margin-bottom:20px; }
+  .chart-card { background: linear-gradient(180deg, var(--card2), var(--card)); border:1px solid var(--border);
+                border-radius:14px; padding:18px; flex:1 1 380px; box-shadow: 0 10px 30px -12px rgba(0,0,0,.5); }
+  .chart-card h3 { margin:0 0 12px; font-size:13px; color:var(--muted); text-transform:uppercase; letter-spacing:.4px; }
+  .chart-card canvas { max-height:280px; }
 </style>
 </head>
 <body>
@@ -564,9 +619,17 @@ function datalists(){
 }
 
 // ---------------- SPOC VIEW ----------------
+// Note: SPOCs only ever see Untagged / Draft / Tagged. The backend already
+// collapses Submitted/Approved into "Tagged" (and strips approval-only
+// fields) before this ever reaches the browser — the approval process
+// happening on the admin side is never visible to them.
+function spocBucket(t){
+  return t.workflow_status;
+}
+
 function renderSpoc(){
-  const counts = { Untagged:0, Draft:0, Submitted:0, Approved:0 };
-  TICKETS.forEach(t => counts[t.workflow_status] = (counts[t.workflow_status]||0)+1);
+  const counts = { Untagged:0, Draft:0, Tagged:0 };
+  TICKETS.forEach(t => counts[spocBucket(t)] = (counts[spocBucket(t)]||0)+1);
 
   document.getElementById('app').innerHTML = `
     ${datalists()}
@@ -577,12 +640,12 @@ function renderSpoc(){
       <div class="filters">
         <select id="fStatus">
           <option value="">All statuses</option>
-          <option>Untagged</option><option>Draft</option><option>Submitted</option><option>Approved</option>
+          <option>Untagged</option><option>Draft</option><option>Tagged</option>
         </select>
       </div>
       <div style="max-height:70vh; overflow:auto;">
       <table><thead><tr>
-        <th>Subject</th><th>Module</th><th>Feature</th><th>Ticket Type</th><th>Case</th><th>Status</th><th>Workflow</th><th>Save</th>
+        <th>Subject</th><th>Module</th><th>Feature</th><th>Ticket Type</th><th>Case</th><th>Status</th><th>Progress</th><th>Save</th>
       </tr></thead><tbody id="tbody"></tbody></table>
       </div>
     </div>
@@ -593,17 +656,18 @@ function renderSpoc(){
 
 function drawSpocRows(){
   const f = document.getElementById('fStatus').value;
-  const rows = TICKETS.filter(t => !f || t.workflow_status === f);
+  const rows = TICKETS.filter(t => !f || spocBucket(t) === f);
   document.getElementById('tbody').innerHTML = rows.map(t => {
-    const locked = t.workflow_status === 'Approved';
+    const bucket = spocBucket(t);
+    const locked = bucket === 'Tagged';
     return `<tr data-id="${t.id}">
       <td class="subj">${esc(t.subject)}<br><a class="tlink" href="${t.web_url||'#'}" target="_blank">Open in Zoho &rarr;</a></td>
-      <td>${locked ? esc(t.tag_module||'') : fieldInput(t.id,'module', t.spoc_tag_module, t.sugg_module)}</td>
-      <td>${locked ? esc(t.tag_feature||'') : fieldInput(t.id,'feature', t.spoc_tag_feature, t.sugg_feature)}</td>
-      <td>${locked ? esc(t.tag_ticket_type||'') : fieldInput(t.id,'ticket_type', t.spoc_tag_ticket_type, t.sugg_ticket_type)}</td>
-      <td>${locked ? esc(t.tag_case||'') : fieldInput(t.id,'case', t.spoc_tag_case, t.sugg_case)}</td>
-      <td>${locked ? esc(t.tag_status||'') : fieldInput(t.id,'status', t.spoc_tag_status, t.sugg_status)}</td>
-      <td><span class="badge ${t.workflow_status}">${t.workflow_status}</span></td>
+      <td>${locked ? esc(t.tag_module||t.spoc_tag_module||'') : fieldInput(t.id,'module', t.spoc_tag_module, t.sugg_module)}</td>
+      <td>${locked ? esc(t.tag_feature||t.spoc_tag_feature||'') : fieldInput(t.id,'feature', t.spoc_tag_feature, t.sugg_feature)}</td>
+      <td>${locked ? esc(t.tag_ticket_type||t.spoc_tag_ticket_type||'') : fieldInput(t.id,'ticket_type', t.spoc_tag_ticket_type, t.sugg_ticket_type)}</td>
+      <td>${locked ? esc(t.tag_case||t.spoc_tag_case||'') : fieldInput(t.id,'case', t.spoc_tag_case, t.sugg_case)}</td>
+      <td>${locked ? esc(t.tag_status||t.spoc_tag_status||'') : fieldInput(t.id,'status', t.spoc_tag_status, t.sugg_status)}</td>
+      <td><span class="badge ${bucket}">${bucket}</span></td>
       <td class="rowActions">
         ${locked ? '' : `<button class="btn secondary" onclick="spocSave('${t.id}','draft')">Draft</button>
         <button class="btn" onclick="spocSave('${t.id}','submit')">Submit</button>`}
@@ -627,17 +691,41 @@ async function spocSave(id, action){
 }
 
 // ---------------- ADMIN VIEW ----------------
+let ADMIN_TAB = 'queue';
+let chartSpocInstance = null;
+let chartAccuracyInstance = null;
+
 function renderAdmin(){
+  document.getElementById('app').innerHTML = `
+    ${datalists()}
+    <div class="tabs">
+      <div class="tab ${ADMIN_TAB==='queue' ? 'active' : ''}" onclick="switchAdminTab('queue')">Approval Queue</div>
+      <div class="tab ${ADMIN_TAB==='dashboard' ? 'active' : ''}" onclick="switchAdminTab('dashboard')">Dashboard</div>
+    </div>
+    <div id="adminTabContent"></div>
+  `;
+  renderAdminTabContent();
+}
+
+function switchAdminTab(tab){
+  ADMIN_TAB = tab;
+  renderAdmin();
+}
+
+function renderAdminTabContent(){
+  if (ADMIN_TAB === 'dashboard') renderAdminDashboard();
+  else renderAdminQueue();
+}
+
+function renderAdminQueue(){
   const counts = { Untagged:0, Draft:0, Submitted:0, Approved:0 };
   TICKETS.forEach(t => counts[t.workflow_status] = (counts[t.workflow_status]||0)+1);
   const spocs = [...new Set(TICKETS.map(t=>t.cf_task_spoc_name))].sort();
 
-  document.getElementById('app').innerHTML = `
-    ${datalists()}
+  document.getElementById('adminTabContent').innerHTML = `
     <div class="kpis">
       ${Object.entries(counts).map(([k,v]) => `<div class="kpi"><div class="num">${v}</div><div class="label">${k}</div></div>`).join('')}
     </div>
-    ${accuracyPanel()}
     <div class="card">
       <div class="filters">
         <select id="fSpoc"><option value="">All SPOCs</option>${spocs.map(s=>`<option>${esc(s)}</option>`).join('')}</select>
@@ -658,6 +746,97 @@ function renderAdmin(){
   document.getElementById('fSpoc').addEventListener('change', drawAdminRows);
   document.getElementById('fStatus').addEventListener('change', drawAdminRows);
   drawAdminRows();
+}
+
+function renderAdminDashboard(){
+  const total = TICKETS.length;
+  const tagged = TICKETS.filter(t => t.workflow_status === 'Submitted' || t.workflow_status === 'Approved').length;
+  const approved = TICKETS.filter(t => t.workflow_status === 'Approved').length;
+  const pendingReview = TICKETS.filter(t => t.workflow_status === 'Submitted').length;
+  const o = STATS ? STATS.overall : null;
+  const rateStr = v => (v === null || v === undefined) ? '&mdash;' : `${v}%`;
+
+  document.getElementById('adminTabContent').innerHTML = `
+    <div class="kpis">
+      <div class="kpi"><div class="num">${total}</div><div class="label">Total tickets</div></div>
+      <div class="kpi"><div class="num">${tagged}</div><div class="label">Tagged by SPOCs</div></div>
+      <div class="kpi"><div class="num">${approved}</div><div class="label">Approved</div></div>
+      <div class="kpi"><div class="num">${pendingReview}</div><div class="label">Awaiting your review</div></div>
+      <div class="kpi"><div class="num">${o ? rateStr(o.accuracy_pct) : '&mdash;'}</div><div class="label">Overall accuracy</div></div>
+    </div>
+    <div class="charts-row">
+      <div class="chart-card">
+        <h3>Tagged tickets by SPOC</h3>
+        <canvas id="chartSpoc"></canvas>
+      </div>
+      <div class="chart-card">
+        <h3>Accuracy breakdown</h3>
+        <canvas id="chartAccuracy"></canvas>
+      </div>
+    </div>
+    ${accuracyPanel()}
+  `;
+  drawAdminCharts();
+}
+
+function drawAdminCharts(){
+  if (typeof Chart === 'undefined') return;
+
+  const chartTextColor = '#9aa1b8';
+  const gridColor = 'rgba(154,161,184,.12)';
+  const palette = ['#7c8cff', '#b06dfc', '#3ecf8e', '#f2b84b', '#f2604b'];
+
+  // --- Chart 1: tagged vs total per SPOC ---
+  const spocs = [...new Set(TICKETS.map(t => t.cf_task_spoc_name))].sort();
+  const totals = spocs.map(s => TICKETS.filter(t => t.cf_task_spoc_name === s).length);
+  const taggedCounts = spocs.map(s => TICKETS.filter(t => t.cf_task_spoc_name === s &&
+    (t.workflow_status === 'Submitted' || t.workflow_status === 'Approved')).length);
+
+  if (chartSpocInstance) chartSpocInstance.destroy();
+  const ctxSpoc = document.getElementById('chartSpoc');
+  if (ctxSpoc) {
+    chartSpocInstance = new Chart(ctxSpoc, {
+      type: 'bar',
+      data: {
+        labels: spocs,
+        datasets: [
+          { label: 'Total tickets', data: totals, backgroundColor: 'rgba(154,161,184,.25)', borderRadius: 6 },
+          { label: 'Tagged', data: taggedCounts, backgroundColor: '#7c8cff', borderRadius: 6 },
+        ]
+      },
+      options: {
+        responsive: true,
+        plugins: { legend: { labels: { color: chartTextColor } } },
+        scales: {
+          x: { ticks: { color: chartTextColor }, grid: { display: false } },
+          y: { ticks: { color: chartTextColor }, grid: { color: gridColor }, beginAtZero: true }
+        }
+      }
+    });
+  }
+
+  // --- Chart 2: accuracy breakdown (donut) ---
+  if (chartAccuracyInstance) chartAccuracyInstance.destroy();
+  const ctxAcc = document.getElementById('chartAccuracy');
+  if (ctxAcc && STATS) {
+    const o = STATS.overall;
+    chartAccuracyInstance = new Chart(ctxAcc, {
+      type: 'doughnut',
+      data: {
+        labels: ['Correct on submit', 'Corrected by admin', 'Admin-tagged', 'Pre-tagged (legacy)'],
+        datasets: [{
+          data: [o.correct, o.corrected, o.admin_tagged, o.system],
+          backgroundColor: palette,
+          borderColor: '#161a26',
+          borderWidth: 2,
+        }]
+      },
+      options: {
+        responsive: true,
+        plugins: { legend: { position: 'bottom', labels: { color: chartTextColor, boxWidth: 12, padding: 12 } } }
+      }
+    });
+  }
 }
 
 function accuracyPanel(){
