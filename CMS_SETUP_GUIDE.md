@@ -92,7 +92,21 @@ if path not in sys.path:
 from cms_app import app as application
 ```
 
-**8. Set a fixed secret key.** Web tab → Environment variables → add `CMS_SECRET_KEY` with any long random string (otherwise everyone gets logged out whenever the app restarts). `cms_app.py` already reads this via `os.environ.get("CMS_SECRET_KEY", ...)` — no code change needed.
+**8. Set a fixed secret key.** Otherwise everyone gets logged out whenever the app restarts (PythonAnywhere free tier recycles idle apps automatically, so this happens often). `cms_app.py` already reads this via `os.environ.get("CMS_SECRET_KEY", ...)`, so there's nothing to change in the code — just get the value into the process one of two ways:
+
+- **Web tab → Environment variables section** (if your account has it): add `CMS_SECRET_KEY` with any long random string, then Reload.
+- **Set it directly in the WSGI file** (if that section isn't available on your account): open the WSGI configuration file (linked near the top of the Web tab, something like `/var/www/<yourusername>_pythonanywhere_com_wsgi.py`) and add the line **before** the `from cms_app import app` line:
+  ```python
+  import sys, os
+  path = '/home/<yourusername>/ticket-cms'
+  if path not in sys.path:
+      sys.path.insert(0, path)
+
+  os.environ['CMS_SECRET_KEY'] = '38000663995d6b13fd91d28c8684c78c8a8926b997033978e46f324948941991'
+
+  from cms_app import app as application
+  ```
+  Then Reload. (That random string above was freshly generated — safe to use as-is, or generate your own with `python3 -c "import secrets; print(secrets.token_hex(32))"`.)
 
 **9. Reload the app** (green button, top of the Web tab).
 

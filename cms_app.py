@@ -627,15 +627,30 @@ async function boot(){
 
   const tr = await fetch('/api/tickets');
   const td = await tr.json();
+  if (!tr.ok || td.error) {
+    // Session expired/invalidated server-side (e.g. app restarted) mid-load.
+    // Force back to a clean login screen rather than rendering with broken data.
+    sessionExpired();
+    return;
+  }
   TICKETS = td.tickets || [];
 
   if (ME.role === 'admin') {
     const sr = await fetch('/api/admin/stats');
-    STATS = await sr.json();
+    const sd = await sr.json();
+    STATS = (sr.ok && !sd.error) ? sd : null;
     renderAdmin();
   } else {
     renderSpoc();
   }
+}
+
+function sessionExpired(){
+  document.getElementById('app').style.display = 'none';
+  document.getElementById('app').innerHTML = '';
+  document.getElementById('who').innerHTML = '';
+  document.getElementById('loginScreen').style.display = 'flex';
+  document.getElementById('loginErr').textContent = 'Your session expired — please sign in again.';
 }
 
 async function logout(){
@@ -1006,7 +1021,7 @@ function drawAdminCharts(){
   // --- Chart 2: accuracy breakdown (donut) ---
   if (chartAccuracyInstance) chartAccuracyInstance.destroy();
   const ctxAcc = document.getElementById('chartAccuracy');
-  if (ctxAcc && STATS) {
+  if (ctxAcc && STATS && STATS.overall) {
     const o = STATS.overall;
     chartAccuracyInstance = new Chart(ctxAcc, {
       type: 'doughnut',
@@ -1028,7 +1043,7 @@ function drawAdminCharts(){
 }
 
 function accuracyPanel(){
-  if (!STATS) return '';
+  if (!STATS || !STATS.overall || !STATS.per_spoc) return '';
   const o = STATS.overall;
   const rateStr = v => (v === null || v === undefined) ? '&mdash;' : `${v}%`;
   const spocRows = Object.entries(STATS.per_spoc).sort((a,b)=>a[0].localeCompare(b[0])).map(([name, s]) => `
