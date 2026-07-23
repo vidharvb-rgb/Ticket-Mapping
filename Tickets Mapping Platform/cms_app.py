@@ -105,7 +105,11 @@ def get_db():
     if "db" not in g:
         g.db = sqlite3.connect(DB_PATH)
         g.db.row_factory = sqlite3.Row
-        g.db.execute("PRAGMA journal_mode=MEMORY;")
+        # WAL, not MEMORY — MEMORY keeps the crash-recovery journal in RAM,
+        # so a worker killed mid-write has nothing durable to roll back to
+        # and can leave a row's bytes zeroed out. WAL is still fast and
+        # allows concurrent readers during a write, but is crash-safe.
+        g.db.execute("PRAGMA journal_mode=WAL;")
     return g.db
 
 

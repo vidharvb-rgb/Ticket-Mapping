@@ -3,6 +3,8 @@ tickets.db
 tickets.db-journal
 *.db
 *.db-journal
+*.db-wal
+*.db-shm
 
 # Raw export / working files, not needed to run the CMS app.
 *.xlsx
