@@ -137,7 +137,7 @@ def _init_taxonomy_table():
         "Lead Manager": {
             "feature": ["Bulk Download", "Bulk Upload", "Bulk Data Update", "Bulk Campaign Update",
                         "Purge", "Timeline", "Profile Page", "Add Quick Lead", "Filters",
-                        "Listing Columns", "Allocation"],
+                        "Listing Columns", "Allocation", "General / Uncategorized"],
             "ticket_type": ["Request Stuck", "Bug", "Delay", "Feature Request", "How To", "Query"],
             "case": ["Infra issue", "Cache Issue", "Config Issue", "Release Impact", "Not a Bug",
                      "New Feature Request", "Feature Enhancement", "Knowledge Gap",
@@ -913,7 +913,11 @@ function fieldInput(id, field, current, suggested){
 }
 
 function datalists(){
-  const modules = (window.TAXONOMY && window.TAXONOMY.module) || [];
+  // Only suggest modules that actually have configured Feature/Ticket Type/
+  // Case/Status data (currently just Lead Manager) — not the full ~40-entry
+  // flat module list, most of which has no scoped taxonomy behind it yet.
+  // Grows automatically as more modules are added via the admin Values tab.
+  const modules = Object.keys(window.MODULE_TAXONOMY || {}).sort();
   return `<datalist id="dl_module">${modules.map(v => `<option value="${esc(v)}">`).join('')}</datalist>
     <div id="rowDatalists"></div>`;
 }
