@@ -116,6 +116,68 @@ def close_db(_exc):
         db.close()
 
 
+# ---------------------------------------------------------------------------
+# Per-module dropdown values — lets an admin scope Feature/Ticket Type/Case/
+# Status suggestions to a specific Module instead of the single flat
+# TAXONOMY list above. A module with no rows here falls back to that flat
+# list unchanged, so this only takes effect module-by-module as data is
+# added via the admin "Values" tab.
+# ---------------------------------------------------------------------------
+def _init_taxonomy_table():
+    con = sqlite3.connect(DB_PATH)
+    con.execute("""
+        CREATE TABLE IF NOT EXISTS taxonomy_values (
+            module TEXT NOT NULL,
+            field  TEXT NOT NULL,
+            value  TEXT NOT NULL,
+            PRIMARY KEY (module, field, value)
+        )
+    """)
+    seed = {
+        "Lead Manager": {
+            "feature": ["Bulk Download", "Bulk Upload", "Bulk Data Update", "Bulk Campaign Update",
+                        "Purge", "Timeline", "Profile Page", "Add Quick Lead", "Filters",
+                        "Listing Columns", "Allocation"],
+            "ticket_type": ["Request Stuck", "Bug", "Delay", "Feature Request", "How To", "Query"],
+            "case": ["Infra issue", "Cache Issue", "Config Issue", "Release Impact", "Not a Bug",
+                     "New Feature Request", "Feature Enhancement", "Knowledge Gap",
+                     "Confusing/Hidden Config", "Regular Query", "Adhoc"],
+            "status": ["Fixed", "In Dev", "In QA", "Partially Fixed", "Added to Backlog",
+                       "Picked in Dev", "UI Revamp Planned", "Updated In the Article",
+                       "Knowledge Gap", "Executed"],
+        },
+    }
+    for module, fields in seed.items():
+        for field, values in fields.items():
+            for value in values:
+                con.execute(
+                    "INSERT OR IGNORE INTO taxonomy_values (module, field, value) VALUES (?, ?, ?)",
+                    (module, field, value),
+                )
+    con.commit()
+    con.close()
+
+
+_init_taxonomy_table()
+
+
+def get_module_taxonomy(db):
+    rows = db.execute(
+        "SELECT module, field, value FROM taxonomy_values WHERE module != '' ORDER BY value"
+    ).fetchall()
+    out = {}
+    for r in rows:
+        out.setdefault(r["module"], {}).setdefault(r["field"], []).append(r["value"])
+    return out
+
+
+def get_all_modules(db):
+    extra = db.execute(
+        "SELECT value FROM taxonomy_values WHERE module = '' AND field = 'module' ORDER BY value"
+    ).fetchall()
+    return TAXONOMY["module"] + [r["value"] for r in extra if r["value"] not in TAXONOMY["module"]]
+
+
 def now_iso():
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
@@ -175,7 +237,13 @@ def logout():
 @app.get("/api/me")
 def api_me():
     user = current_user()
-    return jsonify(user=user, client_id=GOOGLE_CLIENT_ID, taxonomy=TAXONOMY)
+    taxonomy = dict(TAXONOMY)
+    module_taxonomy = {}
+    if user:
+        db = get_db()
+        taxonomy["module"] = get_all_modules(db)
+        module_taxonomy = get_module_taxonomy(db)
+    return jsonify(user=user, client_id=GOOGLE_CLIENT_ID, taxonomy=taxonomy, module_taxonomy=module_taxonomy)
 
 
 # ---------------------------------------------------------------------------
@@ -444,6 +512,52 @@ def admin_stats():
 
 
 # ---------------------------------------------------------------------------
+# Admin: manage per-module dropdown values (the "Values" tab)
+# ---------------------------------------------------------------------------
+VALUE_FIELDS = {"module", "feature", "ticket_type", "case", "status"}
+
+
+@app.post("/api/admin/taxonomy/add")
+def admin_taxonomy_add():
+    user, err = require_role("admin")
+    if err:
+        return err
+    payload = request.get_json(force=True, silent=True) or {}
+    field = payload.get("field")
+    value = (payload.get("value") or "").strip()
+    module = "" if field == "module" else (payload.get("module") or "").strip()
+    if field not in VALUE_FIELDS or not value or (field != "module" and not module):
+        return jsonify(ok=False, error="bad request"), 400
+    db = get_db()
+    db.execute(
+        "INSERT OR IGNORE INTO taxonomy_values (module, field, value) VALUES (?, ?, ?)",
+        (module, field, value),
+    )
+    db.commit()
+    return jsonify(ok=True)
+
+
+@app.post("/api/admin/taxonomy/remove")
+def admin_taxonomy_remove():
+    user, err = require_role("admin")
+    if err:
+        return err
+    payload = request.get_json(force=True, silent=True) or {}
+    field = payload.get("field")
+    value = (payload.get("value") or "").strip()
+    module = "" if field == "module" else (payload.get("module") or "").strip()
+    if field not in VALUE_FIELDS or not value:
+        return jsonify(ok=False, error="bad request"), 400
+    db = get_db()
+    db.execute(
+        "DELETE FROM taxonomy_values WHERE module = ? AND field = ? AND value = ?",
+        (module, field, value),
+    )
+    db.commit()
+    return jsonify(ok=True)
+
+
+# ---------------------------------------------------------------------------
 # Admin: import a fresh Zoho export without touching tagging/approval state
 # ---------------------------------------------------------------------------
 # Same shape build_db.py reads from a zoho_tasks_consolidated_*.json file.
@@ -618,6 +732,10 @@ INDEX_HTML = r"""<!DOCTYPE html>
   .badge.Draft { background: rgba(109,40,217,.12); color: var(--draft); }
   .badge.Submitted { background: rgba(180,83,9,.12); color: var(--suggested); }
   .badge.Approved, .badge.Tagged { background: rgba(12,163,12,.12); color: var(--confirmed); }
+  .chip { display:inline-flex; align-items:center; gap:6px; background:var(--card2);
+          border:1px solid var(--border); border-radius:20px; padding:4px 6px 4px 12px; font-size:12px; }
+  .chip button { background:none; border:none; color:var(--danger); cursor:pointer; font-size:12px;
+                 padding:0 4px; line-height:1; }
   .btn { background: var(--grad); color:#fff; border:none; border-radius:8px; padding:7px 14px;
          font-size:12px; cursor:pointer; font-weight:600; }
   .btn:hover { transform: translateY(-1px); box-shadow: 0 6px 16px -6px rgba(42,120,214,.35); }
@@ -737,6 +855,7 @@ async function boot(){
   }
   ME = me.user;
   window.TAXONOMY = me.taxonomy;
+  window.MODULE_TAXONOMY = me.module_taxonomy || {};
   document.getElementById('loginScreen').style.display = 'none';
   document.getElementById('app').style.display = 'block';
   document.getElementById('who').innerHTML =
@@ -785,13 +904,44 @@ async function logout(){
 function fieldInput(id, field, current, suggested){
   const val = current || '';
   const ph = suggested ? `suggested: ${suggested}` : '';
-  return `<input type="text" list="dl_${field}" data-ticket="${id}" data-field="${field}" value="${esc(val)}" placeholder="${esc(ph)}">`;
+  // Module drives what Feature/Ticket Type/Case/Status offer, so each ticket
+  // row gets its own scoped datalist instead of one shared globally — see
+  // rowDatalists()/onModuleInput() below.
+  const listId = field === 'module' ? 'dl_module' : `dl_${field}_${id}`;
+  const extra = field === 'module' ? ` oninput="onModuleInput(this)"` : '';
+  return `<input type="text" list="${listId}" data-ticket="${id}" data-field="${field}" value="${esc(val)}" placeholder="${esc(ph)}"${extra}>`;
 }
 
 function datalists(){
-  return Object.entries(window.TAXONOMY || {}).map(([k, vals]) =>
-    `<datalist id="dl_${k}">${vals.map(v => `<option value="${esc(v)}">`).join('')}</datalist>`
+  const modules = (window.TAXONOMY && window.TAXONOMY.module) || [];
+  return `<datalist id="dl_module">${modules.map(v => `<option value="${esc(v)}">`).join('')}</datalist>
+    <div id="rowDatalists"></div>`;
+}
+
+// A module with values in window.MODULE_TAXONOMY (added via the admin
+// Values tab) scopes that field's suggestions to just that module; any
+// other module falls back to the flat, unscoped TAXONOMY list.
+function optionsFor(moduleVal, field){
+  if (field === 'module') return (window.TAXONOMY && window.TAXONOMY.module) || [];
+  const scoped = ((window.MODULE_TAXONOMY || {})[moduleVal] || {})[field];
+  if (scoped && scoped.length) return scoped;
+  return (window.TAXONOMY && window.TAXONOMY[field]) || [];
+}
+
+function rowDatalists(t){
+  const mod = t.spoc_tag_module || t.sugg_module || '';
+  return ['feature', 'ticket_type', 'case', 'status'].map(f =>
+    `<datalist id="dl_${f}_${t.id}">${optionsFor(mod, f).map(v => `<option value="${esc(v)}">`).join('')}</datalist>`
   ).join('');
+}
+
+function onModuleInput(input){
+  const id = input.dataset.ticket;
+  const mod = input.value;
+  ['feature', 'ticket_type', 'case', 'status'].forEach(f => {
+    const dl = document.getElementById(`dl_${f}_${id}`);
+    if (dl) dl.innerHTML = optionsFor(mod, f).map(v => `<option value="${esc(v)}">`).join('');
+  });
 }
 
 function suggestionHint(){
@@ -854,6 +1004,7 @@ function drawSpocRows(){
       </td>
     </tr>`;
   }).join('');
+  document.getElementById('rowDatalists').innerHTML = rows.map(rowDatalists).join('');
 }
 
 async function spocSave(id, action){
@@ -882,11 +1033,13 @@ function renderAdmin(){
       <div class="tab ${ADMIN_TAB==='queue' ? 'active' : ''}" onclick="switchAdminTab('queue')">Approval Queue</div>
       <div class="tab ${ADMIN_TAB==='dashboard' ? 'active' : ''}" onclick="switchAdminTab('dashboard')">Dashboard</div>
       <div class="tab ${ADMIN_TAB==='database' ? 'active' : ''}" onclick="switchAdminTab('database')">Database</div>
+      <div class="tab ${ADMIN_TAB==='values' ? 'active' : ''}" onclick="switchAdminTab('values')">Values</div>
     </div>
     <div id="adminTabContent"></div>
   `;
   if (ADMIN_TAB === 'dashboard') renderAdminDashboard();
   else if (ADMIN_TAB === 'database') renderAdminDatabase();
+  else if (ADMIN_TAB === 'values') renderAdminValues();
   else renderAdminQueue();
 }
 
@@ -957,6 +1110,7 @@ function drawAdminRows(){
       </td>
     </tr>`;
   }).join('');
+  document.getElementById('rowDatalists').innerHTML = rows.map(rowDatalists).join('');
 }
 
 async function adminSave(id, action){
@@ -1100,6 +1254,122 @@ async function runImport(){
   } finally {
     button.disabled = false;
   }
+}
+
+// ---------------- ADMIN: VALUES (manage dropdown values) ----------------
+// Module is the only globally-scoped field; Feature/Ticket Type/Case/Status
+// are always managed *within* a chosen Module (see optionsFor() above) —
+// this mirrors exactly how the tagging screen looks them up.
+const VALUE_FIELD_LABELS = { module: 'Module', feature: 'Feature', ticket_type: 'Ticket Type',
+  case: 'Case', status: 'Status' };
+
+function renderAdminValues(){
+  const modules = (window.TAXONOMY && window.TAXONOMY.module) || [];
+  document.getElementById('adminTabContent').innerHTML = `
+    <div class="card">
+      <h3 style="margin-top:0;">Manage dropdown values</h3>
+      <div class="hint" style="margin-bottom:14px;">
+        Feature, Ticket Type, Case, and Status values are scoped to a specific Module &mdash; the
+        tagging screen only offers these scoped suggestions once a module has values here; modules
+        without any values here keep showing the full shared list, unchanged. Module values apply
+        everywhere.
+      </div>
+      <div class="filters">
+        <select id="valField">
+          ${Object.entries(VALUE_FIELD_LABELS).map(([k,l]) =>
+            `<option value="${k}"${k==='feature'?' selected':''}>${l}</option>`).join('')}
+        </select>
+        <select id="valModule">
+          ${modules.map(m => `<option${m==='Lead Manager'?' selected':''}>${esc(m)}</option>`).join('')}
+        </select>
+      </div>
+      <div id="valListArea" style="margin-top:14px;"></div>
+    </div>
+  `;
+  document.getElementById('valField').addEventListener('change', () => {
+    document.getElementById('valModule').style.display =
+      document.getElementById('valField').value === 'module' ? 'none' : '';
+    drawValueList();
+  });
+  document.getElementById('valModule').addEventListener('change', drawValueList);
+  drawValueList();
+}
+
+function currentValueList(){
+  const field = document.getElementById('valField').value;
+  if (field === 'module') return (window.TAXONOMY && window.TAXONOMY.module) || [];
+  const mod = document.getElementById('valModule').value;
+  return ((window.MODULE_TAXONOMY || {})[mod] || {})[field] || [];
+}
+
+function drawValueList(){
+  const field = document.getElementById('valField').value;
+  const values = currentValueList();
+  // Kept in a safe lookup array rather than embedding the raw value in an
+  // onclick string — a value containing a quote would otherwise break the
+  // attribute (same reasoning as openConversation() above).
+  window._valListCache = values;
+  document.getElementById('valListArea').innerHTML = `
+    <div style="display:flex; flex-wrap:wrap; gap:8px; margin-bottom:14px;">
+      ${values.length ? values.map((v,i) => `
+        <span class="chip">${esc(v)}<button data-idx="${i}" onclick="removeTaxonomyValue(this)" title="Remove">&#10005;</button></span>
+      `).join('') : `<div class="hint">No values yet${field === 'module' ? '' : ' for this module'}.</div>`}
+    </div>
+    <div style="display:flex; gap:8px;">
+      <input type="text" id="valNew" placeholder="New value">
+      <button class="btn" onclick="addTaxonomyValue()">Add</button>
+    </div>
+  `;
+}
+
+async function addTaxonomyValue(){
+  const field = document.getElementById('valField').value;
+  const mod = field === 'module' ? '' : document.getElementById('valModule').value;
+  const input = document.getElementById('valNew');
+  const value = input.value.trim();
+  if (!value) return;
+  const r = await fetch('/api/admin/taxonomy/add', { method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({ module: mod, field, value }) });
+  const data = await r.json();
+  if (!r.ok || !data.ok) {
+    if (r.status === 401) { sessionExpired(); return; }
+    alert(data.error || 'Failed to add value.');
+    return;
+  }
+  applyTaxonomyDelta(mod, field, value, 'add');
+  input.value = '';
+  drawValueList();
+}
+
+async function removeTaxonomyValue(btn){
+  const idx = Number(btn.dataset.idx);
+  const value = window._valListCache[idx];
+  const field = document.getElementById('valField').value;
+  const mod = field === 'module' ? '' : document.getElementById('valModule').value;
+  const r = await fetch('/api/admin/taxonomy/remove', { method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({ module: mod, field, value }) });
+  const data = await r.json();
+  if (!r.ok || !data.ok) {
+    if (r.status === 401) { sessionExpired(); return; }
+    alert(data.error || 'Failed to remove value.');
+    return;
+  }
+  applyTaxonomyDelta(mod, field, value, 'remove');
+  drawValueList();
+}
+
+function applyTaxonomyDelta(mod, field, value, action){
+  if (field === 'module') {
+    window.TAXONOMY.module = window.TAXONOMY.module || [];
+    window.TAXONOMY.module = window.TAXONOMY.module.filter(v => v !== value);
+    if (action === 'add') { window.TAXONOMY.module.push(value); window.TAXONOMY.module.sort(); }
+    return;
+  }
+  window.MODULE_TAXONOMY = window.MODULE_TAXONOMY || {};
+  window.MODULE_TAXONOMY[mod] = window.MODULE_TAXONOMY[mod] || {};
+  let list = (window.MODULE_TAXONOMY[mod][field] || []).filter(v => v !== value);
+  if (action === 'add') { list.push(value); list.sort(); }
+  window.MODULE_TAXONOMY[mod][field] = list;
 }
 
 function accuracyPanel(){
