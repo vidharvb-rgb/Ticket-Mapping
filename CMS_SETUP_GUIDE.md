@@ -12,6 +12,7 @@
 - Scope: the 1,291 tickets already covered by the tagging dashboard, assigned to those three SPOCs. 66 of them already had a taxonomy someone was confident in — those are seeded in pre-approved, labeled `System` in accuracy tracking, and excluded from the accuracy rate. The other 1,225 start `Untagged`, with best-guess suggested values shown as greyed placeholder text in each field — flagged explicitly in the UI as a starting point to check, not a confirmed answer.
 - **Admin Dashboard tab.** Split into two sections: **Ticket overview** (total / open / in-progress / clarity-or-reopened / completed / high-priority-and-still-open counts, plus status/priority/ticket-type/created-by-month charts) and **Tagging progress** (tagged / approved / awaiting-review / accuracy KPIs, a per-SPOC tagged-vs-total bar chart, and the accuracy donut).
 - **View conversation.** Every ticket row (both SPOC and admin views) has a "View conversation" link next to "Open in Zoho" that opens an in-app modal with that ticket's full comment thread — commenter, role, timestamp, text — pulled live from the `comments` table via `/api/comments/<ticket_id>`. No need to leave the CMS to read ticket history.
+- **Admin Database tab.** A third admin-only tab lets you upload a fresh Zoho export (the same JSON array `build_db.py` reads) straight from the browser to refresh `tickets.db` on the server — no PythonAnywhere console/file-upload needed. It updates ticket metadata (status, priority, assignee, comments) and adds tickets that don't exist yet; it never touches `tag_*`, `workflow_status`, `submitted_*`, `approved_*`, or `accuracy_*` on tickets already in progress, and never deletes a ticket missing from the file. New tickets start `Untagged` with no suggested values. See "Refreshing ticket data" below.
 
 ## The one real limitation
 
@@ -136,6 +137,16 @@ Note: PythonAnywhere's free tier restricts outbound requests to an allowlist, bu
 2. Copy `cms_app.py` and `tickets.db` there together.
 3. Run behind a real WSGI server (not `python3 cms_app.py`'s dev server) — e.g. `gunicorn cms_app:app`.
 4. Set a fixed `CMS_SECRET_KEY` environment variable.
+
+## Refreshing ticket data (no PythonAnywhere login needed)
+
+Once the app is deployed, the admin's **Database** tab (Approval Queue / Dashboard / Database) lets you push a newer Zoho export into the live `tickets.db` just by signing in as admin and uploading the file — no PythonAnywhere console, no file-manager upload, no restart.
+
+- Export the same JSON array shape `build_db.py` consumes (an array of ticket records, each with `id`, `cf_task_spoc`, `comments`, etc.).
+- For exports over a few MB, gzip it first — `gzip -k zoho_tasks_consolidated_YYYY-MM-DD.json` — and upload the `.json.gz` directly; the server decompresses it automatically. This matters on PythonAnywhere specifically since large in-browser uploads over a slow connection can be slow or, on constrained plans, time out — a compressed export uploads far faster.
+- The endpoint (`POST /api/admin/import`, admin-only — enforced server-side, not just by hiding the tab) **updates** ticket metadata (status, priority, assignee, department, comments) for tickets already in `tickets.db`, and **inserts** any ticket ID it hasn't seen before. It never writes to `tag_*`, `sugg_*`, `spoc_tag_*`, `submitted_*`, `approved_*`, `workflow_status`, or `accuracy_*` for tickets that already exist — so a re-import can't clobber tagging or approval work in progress. It also never deletes a ticket that's missing from the file.
+- New tickets pulled in this way start `Untagged` with no suggested values (the original suggested-taxonomy seeding was a one-off manual pass, not something the app recomputes) — they show up in the normal queues for a SPOC or admin to tag.
+- The response reports how many tickets were new vs. updated and how many comment rows were written, so you can sanity-check the import before trusting it.
 
 ## Approval & accuracy tracking
 

@@ -19,6 +19,8 @@ Run:
     python3 cms_app.py
 Then open http://localhost:5051
 """
+import gzip
+import json
 import os
 import re
 import secrets
@@ -442,6 +444,115 @@ def admin_stats():
 
 
 # ---------------------------------------------------------------------------
+# Admin: import a fresh Zoho export without touching tagging/approval state
+# ---------------------------------------------------------------------------
+# Same shape build_db.py reads from a zoho_tasks_consolidated_*.json file.
+# Deliberately excludes every tag_*/sugg_*/spoc_tag_*/submitted_*/approved_*/
+# workflow_status/accuracy_* column — an import must never overwrite tagging
+# or approval work already in progress, only refresh ticket metadata and pull
+# in tickets/comments that didn't exist yet.
+IMPORT_META_COLS = [
+    "subject", "status", "priority", "due_date", "created_time", "modified_time",
+    "completed_time", "department_id", "department_name", "cf_module",
+    "cf_task_spoc_id", "cf_task_spoc_name", "cf_type_of_task", "cf_organization_name",
+    "cf_task_requested_for", "cf_resolution_category", "description",
+    "assignee_name", "assignee_email", "web_url", "comment_count",
+]
+
+
+def _strip_html(html):
+    if not html:
+        return html
+    text = re.sub(r"<[^>]+>", " ", html)
+    text = re.sub(r"&nbsp;", " ", text)
+    text = re.sub(r"&amp;", "&", text)
+    text = re.sub(r"&lt;", "<", text)
+    text = re.sub(r"&gt;", ">", text)
+    text = re.sub(r"\s+", " ", text).strip()
+    return text
+
+
+def _parse_import_record(rec):
+    spoc = rec.get("cf_task_spoc") or {}
+    assignee = rec.get("assignee") or {}
+    comments = rec.get("comments") or []
+    meta = (
+        rec.get("subject"), rec.get("status"), rec.get("priority"), rec.get("dueDate"),
+        rec.get("createdTime"), rec.get("modifiedTime"), rec.get("completedTime"),
+        rec.get("departmentId"), rec.get("department_name"), rec.get("cf_module"),
+        spoc.get("id"), spoc.get("name"), rec.get("cf_type_of_task"),
+        rec.get("cf_organization_name"), rec.get("cf_task_requested_for"),
+        rec.get("cf_resolution_category"), rec.get("description"),
+        assignee.get("name"), assignee.get("email"), rec.get("webUrl"), len(comments),
+    )
+    return meta, comments
+
+
+@app.post("/api/admin/import")
+def admin_import():
+    user, err = require_role("admin")
+    if err:
+        return err
+
+    f = request.files.get("file")
+    if not f:
+        return jsonify(ok=False, error="no file uploaded"), 400
+
+    try:
+        stream = gzip.GzipFile(fileobj=f.stream) if (f.filename or "").endswith(".gz") else f.stream
+        records = json.load(stream)
+    except Exception as e:  # noqa: BLE001 — surfaced to the admin as an import error
+        return jsonify(ok=False, error=f"could not parse JSON: {e}"), 400
+
+    if not isinstance(records, list):
+        return jsonify(ok=False, error="expected a JSON array of ticket records"), 400
+
+    db = get_db()
+    existing_ids = {r["id"] for r in db.execute("SELECT id FROM tickets").fetchall()}
+
+    update_rows = []
+    insert_rows = []
+    comment_rows = []
+    for rec in records:
+        ticket_id = rec.get("id")
+        if not ticket_id:
+            continue
+        meta, comments = _parse_import_record(rec)
+        if ticket_id in existing_ids:
+            update_rows.append(meta + (ticket_id,))
+        else:
+            insert_rows.append((ticket_id,) + meta)
+            existing_ids.add(ticket_id)
+        for c in comments:
+            comment_rows.append((
+                c.get("id"), ticket_id, c.get("commentedTime"), c.get("modifiedTime"),
+                c.get("commenterId"), c.get("commenter_name"), c.get("commenter_email"),
+                c.get("commenter_type"), c.get("commenter_role"),
+                c.get("content"), _strip_html(c.get("content") or ""),
+            ))
+
+    if update_rows:
+        db.executemany(
+            f"UPDATE tickets SET {', '.join(f'{c} = ?' for c in IMPORT_META_COLS)} WHERE id = ?",
+            update_rows,
+        )
+    if insert_rows:
+        cols = ["id"] + IMPORT_META_COLS
+        db.executemany(
+            f"INSERT INTO tickets ({', '.join(cols)}) VALUES ({', '.join('?' for _ in cols)})",
+            insert_rows,
+        )
+    if comment_rows:
+        db.executemany(
+            "INSERT OR REPLACE INTO comments VALUES (?,?,?,?,?,?,?,?,?,?,?)", comment_rows
+        )
+    db.commit()
+
+    return jsonify(ok=True, total_in_file=len(records), new_tickets=len(insert_rows),
+                    updated_tickets=len(update_rows), comments_written=len(comment_rows))
+
+
+# ---------------------------------------------------------------------------
 # Frontend (single-page, role-aware)
 # ---------------------------------------------------------------------------
 @app.get("/")
@@ -761,10 +872,13 @@ function renderAdmin(){
     <div class="tabs">
       <div class="tab ${ADMIN_TAB==='queue' ? 'active' : ''}" onclick="switchAdminTab('queue')">Approval Queue</div>
       <div class="tab ${ADMIN_TAB==='dashboard' ? 'active' : ''}" onclick="switchAdminTab('dashboard')">Dashboard</div>
+      <div class="tab ${ADMIN_TAB==='database' ? 'active' : ''}" onclick="switchAdminTab('database')">Database</div>
     </div>
     <div id="adminTabContent"></div>
   `;
-  if (ADMIN_TAB === 'dashboard') renderAdminDashboard(); else renderAdminQueue();
+  if (ADMIN_TAB === 'dashboard') renderAdminDashboard();
+  else if (ADMIN_TAB === 'database') renderAdminDatabase();
+  else renderAdminQueue();
 }
 
 function switchAdminTab(tab){
@@ -921,6 +1035,62 @@ function renderAdminDashboard(){
     ${accuracyPanel()}
   `;
   drawAdminCharts();
+}
+
+function renderAdminDatabase(){
+  document.getElementById('adminTabContent').innerHTML = `
+    <div class="card">
+      <h3 style="margin-top:0;">Import fresh ticket data</h3>
+      <div class="hint" style="margin-bottom:14px;">
+        Upload a Zoho ticket export (the same JSON array <code>build_db.py</code> reads) to refresh ticket
+        status, priority, assignee, and comments, and to add tickets that don't exist yet. This never
+        touches tagging, workflow status, or approval history for tickets already in progress &mdash;
+        only ticket metadata and comments are written. Tickets missing from the file are left alone,
+        never deleted. New tickets start <strong>Untagged</strong> with no suggested values.
+      </div>
+      <div class="hint" style="margin-bottom:14px;">
+        Large exports can be slow to upload over the browser &mdash; gzip the file first
+        (<code>gzip -k export.json</code>) and upload the resulting <code>.json.gz</code> directly,
+        it's decompressed automatically.
+      </div>
+      <input type="file" id="importFile" accept=".json,.gz">
+      <button class="btn" onclick="runImport()">Upload &amp; merge</button>
+      <div class="hint" id="importStatus" style="margin-top:12px;"></div>
+    </div>
+  `;
+}
+
+async function runImport(){
+  const input = document.getElementById('importFile');
+  const status = document.getElementById('importStatus');
+  if (!input.files.length) { status.textContent = 'Choose a file first.'; return; }
+  const file = input.files[0];
+  const button = document.querySelector('#adminTabContent .btn');
+  button.disabled = true;
+  status.textContent = `Uploading ${esc(file.name)} (${(file.size/1e6).toFixed(1)} MB)...`;
+
+  const form = new FormData();
+  form.append('file', file);
+  try {
+    const r = await fetch('/api/admin/import', { method: 'POST', body: form });
+    const data = await r.json();
+    if (!r.ok || !data.ok) {
+      if (r.status === 401) { sessionExpired(); return; }
+      status.textContent = data.error || 'Import failed.';
+      return;
+    }
+    status.textContent = `Done — ${data.total_in_file} tickets in file: ${data.new_tickets} new, ${data.updated_tickets} updated, ${data.comments_written} comments written.`;
+
+    const tr = await fetch('/api/tickets');
+    const td = await tr.json();
+    if (!tr.ok || td.error) { sessionExpired(); return; }
+    TICKETS = td.tickets || [];
+    await refreshStats();
+  } catch (e) {
+    status.textContent = 'Import failed: ' + e.message;
+  } finally {
+    button.disabled = false;
+  }
 }
 
 function accuracyPanel(){
