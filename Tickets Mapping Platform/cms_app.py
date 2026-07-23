@@ -566,24 +566,24 @@ INDEX_HTML = r"""<!DOCTYPE html>
 <meta charset="UTF-8">
 <title>Ticket Tagging CMS</title>
 <script src="https://accounts.google.com/gsi/client" async defer></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.4/chart.umd.min.js"></script>
+<script src="/static/chart.umd.min.js"></script>
 <style>
   :root {
-    --bg:#0b0d14; --card:#161a26; --card2:#1b2032; --border:#2a2f42;
-    --text:#eef0f7; --muted:#9aa1b8;
-    --accent:#7c8cff; --accent2:#b06dfc; --confirmed:#3ecf8e; --suggested:#f2b84b;
-    --draft:#8a6df0; --danger:#f2604b;
+    --bg:#f9f9f7; --card:#ffffff; --card2:#f4f4f1; --border:#e1e0d9;
+    --text:#0b0b0b; --muted:#52514e; --faint:#898781;
+    --accent:#2a78d6; --accent2:#8b5cf6; --confirmed:#0ca30c; --suggested:#b45309;
+    --draft:#6d28d9; --danger:#dc2626;
     --grad: linear-gradient(90deg, var(--accent), var(--accent2));
   }
   * { box-sizing: border-box; }
   body { margin:0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-         background: radial-gradient(1200px 500px at 15% -10%, rgba(124,140,255,.14), transparent 60%),
-                     radial-gradient(1000px 500px at 100% 0%, rgba(176,109,252,.12), transparent 55%),
+         background: radial-gradient(1200px 500px at 15% -10%, rgba(42,120,214,.07), transparent 60%),
+                     radial-gradient(1000px 500px at 100% 0%, rgba(139,92,246,.06), transparent 55%),
                      var(--bg);
          color: var(--text); min-height:100vh; }
   .topbar { display:flex; justify-content:space-between; align-items:center; padding:16px 26px;
             border-bottom:1px solid var(--border); position:relative;
-            background: linear-gradient(180deg, rgba(124,140,255,.06), transparent); }
+            background: linear-gradient(180deg, rgba(42,120,214,.05), transparent); }
   .topbar::after { content:''; position:absolute; left:0; right:0; bottom:-1px; height:2px; background: var(--grad); opacity:.8; }
   .topbar h1 { font-size:17px; margin:0; letter-spacing:.2px; }
   .who { font-size:12.5px; color:var(--muted); display:flex; gap:12px; align-items:center; }
@@ -591,78 +591,87 @@ INDEX_HTML = r"""<!DOCTYPE html>
   #loginScreen { display:flex; flex-direction:column; align-items:center; justify-content:center; height:80vh; gap:16px; }
   #loginScreen p { color:var(--muted); font-size:13px; }
   .err { color:var(--danger); font-size:13px; }
-  .card { background: linear-gradient(180deg, var(--card2), var(--card));
+  .card { background: var(--card);
           border:1px solid var(--border); border-radius:14px; padding:18px; margin-bottom:20px;
-          box-shadow: 0 10px 30px -12px rgba(0,0,0,.5); }
-  .kpis { display:flex; gap:14px; flex-wrap:wrap; margin-bottom:20px; }
-  .kpi { background: linear-gradient(160deg, var(--card2), var(--card)); border:1px solid var(--border);
-         border-radius:12px; padding:14px 20px; min-width:130px; position:relative; overflow:hidden;
-         box-shadow: 0 8px 22px -14px rgba(0,0,0,.6); }
+          box-shadow: 0 6px 20px -14px rgba(11,11,11,.12); }
+  .kpis { display:grid; grid-template-columns: repeat(auto-fit, minmax(min(140px, 100%), 1fr)); gap:14px; margin-bottom:20px; }
+  .kpi { background: var(--card); border:1px solid var(--border);
+         border-radius:12px; padding:14px 20px; position:relative; overflow:hidden;
+         box-shadow: 0 4px 14px -10px rgba(11,11,11,.14); }
   .kpi::before { content:''; position:absolute; left:0; top:0; bottom:0; width:3px; background: var(--grad); }
   .kpi .num { font-size:24px; font-weight:800; background: var(--grad); -webkit-background-clip:text;
               background-clip:text; color:transparent; }
   .kpi .label { color:var(--muted); font-size:11.5px; margin-top:3px; text-transform:uppercase; letter-spacing:.4px; }
   table { width:100%; border-collapse: collapse; font-size:12.5px; }
   th, td { text-align:left; padding:9px 10px; border-bottom:1px solid var(--border); vertical-align:top; }
-  th { color: var(--muted); font-weight:700; position:sticky; top:0; background:var(--card2);
+  th { color: var(--muted); font-weight:700; position:sticky; top:0; background:var(--card);
        text-transform:uppercase; font-size:10.5px; letter-spacing:.4px; }
-  tbody tr:hover { background: rgba(124,140,255,.06); }
+  tbody tr:hover { background: rgba(42,120,214,.06); }
+  .table-scroll { overflow-x:auto; }
   .subj { max-width:280px; }
-  input[type=text], select { background:#0e111b; color:var(--text); border:1px solid var(--border);
+  input[type=text], select { background:#ffffff; color:var(--text); border:1px solid var(--border);
          border-radius:7px; padding:6px 9px; font-size:12px; width:150px; }
   input[type=text]:focus, select:focus { outline:none; border-color: var(--accent); }
   input[type=text]::placeholder { color: var(--suggested); opacity:.75; font-style:italic; }
   .badge { padding:3px 10px; border-radius:20px; font-size:10.5px; font-weight:700; white-space:nowrap; }
-  .badge.Untagged { background: rgba(154,160,174,.15); color: var(--muted); }
-  .badge.Draft { background: rgba(138,109,240,.18); color: var(--draft); }
-  .badge.Submitted { background: rgba(242,184,75,.18); color: var(--suggested); }
-  .badge.Approved, .badge.Tagged { background: rgba(62,207,142,.18); color: var(--confirmed); }
+  .badge.Untagged { background: rgba(82,81,78,.12); color: var(--muted); }
+  .badge.Draft { background: rgba(109,40,217,.12); color: var(--draft); }
+  .badge.Submitted { background: rgba(180,83,9,.12); color: var(--suggested); }
+  .badge.Approved, .badge.Tagged { background: rgba(12,163,12,.12); color: var(--confirmed); }
   .btn { background: var(--grad); color:#fff; border:none; border-radius:8px; padding:7px 14px;
          font-size:12px; cursor:pointer; font-weight:600; }
-  .btn:hover { transform: translateY(-1px); box-shadow: 0 6px 16px -6px rgba(124,140,255,.6); }
-  .btn.secondary { background:#232838; }
-  .btn.approve { background: linear-gradient(90deg, var(--confirmed), #2fb87b); color:#04231a; }
+  .btn:hover { transform: translateY(-1px); box-shadow: 0 6px 16px -6px rgba(42,120,214,.35); }
+  .btn.secondary { background:var(--card2); color:var(--text); border:1px solid var(--border); }
+  .btn.approve { background: linear-gradient(90deg, var(--confirmed), #159c15); color:#fff; }
   .btn:disabled { opacity:.4; cursor:not-allowed; }
   .rowActions { display:flex; gap:6px; flex-wrap:wrap; }
   .filters { display:flex; gap:10px; margin-bottom:14px; flex-wrap:wrap; }
   .hint { color:var(--muted); font-size:11.5px; margin-top:2px; }
   a.tlink { color: var(--accent); text-decoration:none; font-size:11.5px; }
-  .tabs { display:flex; gap:6px; margin-bottom:20px; border-bottom:1px solid var(--border); }
+  .tabs { display:flex; gap:6px; margin-bottom:20px; border-bottom:1px solid var(--border); flex-wrap:wrap; }
   .tab { padding:10px 16px; font-size:13px; font-weight:600; color:var(--muted); cursor:pointer;
          border-bottom:2px solid transparent; margin-bottom:-1px; }
   .tab:hover { color: var(--text); }
   .tab.active { color: var(--text); border-bottom-color: var(--accent); }
-  .charts-row { display:flex; gap:18px; flex-wrap:wrap; margin-bottom:20px; }
-  .chart-card { background: linear-gradient(180deg, var(--card2), var(--card)); border:1px solid var(--border);
-                border-radius:14px; padding:18px; flex:1 1 380px; box-shadow: 0 10px 30px -12px rgba(0,0,0,.5); }
+  .charts-row { display:grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap:18px; margin-bottom:20px; }
+  .chart-card { background: var(--card); border:1px solid var(--border);
+                border-radius:14px; padding:18px; box-shadow: 0 6px 20px -14px rgba(11,11,11,.12);
+                min-width:0; }
   .chart-card h3 { margin:0 0 12px; font-size:13px; color:var(--muted); text-transform:uppercase; letter-spacing:.4px; }
-  .chart-card canvas { max-height:280px; }
+  .chart-wrap { position:relative; height:260px; }
   .stitle { font-size:11.5px; font-weight:700; color:var(--muted); text-transform:uppercase;
             letter-spacing:.6px; margin:4px 0 12px; padding-top:16px; border-top:1px solid var(--border); }
   .stitle:first-child { padding-top:0; border-top:none; }
   .convLink { background:none; border:none; color:var(--accent); font-size:11.5px; cursor:pointer;
               padding:0; font-weight:600; }
   .convLink:hover { text-decoration:underline; }
-  .modalOverlay { display:none; position:fixed; inset:0; background:rgba(6,7,12,.72);
+  .modalOverlay { display:none; position:fixed; inset:0; background:rgba(15,15,15,.45);
                   z-index:50; align-items:center; justify-content:center; padding:24px; }
   .modalOverlay.open { display:flex; }
-  .modalBox { background: linear-gradient(180deg, var(--card2), var(--card)); border:1px solid var(--border);
+  .modalBox { background: var(--card); border:1px solid var(--border);
               border-radius:14px; width:100%; max-width:680px; max-height:82vh; display:flex;
-              flex-direction:column; box-shadow: 0 20px 60px -16px rgba(0,0,0,.7); }
+              flex-direction:column; box-shadow: 0 20px 50px -16px rgba(11,11,11,.25); }
   .modalHead { padding:16px 20px; border-bottom:1px solid var(--border); display:flex;
                justify-content:space-between; align-items:flex-start; gap:12px; }
   .modalHead h2 { margin:0 0 4px; font-size:14.5px; }
   .modalHead .sub { color:var(--muted); font-size:11.5px; }
-  .modalClose { background:#232838; border:none; color:var(--text); width:28px; height:28px;
+  .modalClose { background:var(--card2); border:1px solid var(--border); color:var(--text); width:28px; height:28px;
                 border-radius:8px; cursor:pointer; font-size:14px; flex-shrink:0; }
   .modalBody { padding:16px 20px; overflow:auto; }
   .comment { border:1px solid var(--border); border-radius:10px; padding:10px 12px; margin-bottom:10px;
-             background: rgba(255,255,255,.02); }
+             background: var(--card2); }
   .comment .who { display:flex; justify-content:space-between; gap:10px; font-size:11.5px;
                   color:var(--muted); margin-bottom:6px; }
   .comment .who .name { color:var(--text); font-weight:700; }
   .comment .body { font-size:12.5px; white-space:pre-wrap; line-height:1.5; }
   .modalEmpty { color:var(--muted); font-size:12.5px; text-align:center; padding:30px 0; }
+  @media (max-width: 860px) {
+    .charts-row { grid-template-columns: 1fr; }
+  }
+  @media (max-width: 600px) {
+    #app { padding:14px; }
+    .kpis { grid-template-columns: repeat(auto-fit, minmax(min(110px, 100%), 1fr)); }
+  }
 </style>
 </head>
 <body>
@@ -1013,12 +1022,12 @@ function renderAdminDashboard(){
       <div class="kpi"><div class="num">${highRiskOpen}</div><div class="label">High/Blocker &amp; open</div></div>
     </div>
     <div class="charts-row">
-      <div class="chart-card"><h3>Status breakdown</h3><canvas id="chartStatus"></canvas></div>
-      <div class="chart-card"><h3>Priority breakdown</h3><canvas id="chartPriority"></canvas></div>
+      <div class="chart-card"><h3>Status breakdown</h3><div class="chart-wrap"><canvas id="chartStatus"></canvas></div></div>
+      <div class="chart-card"><h3>Priority breakdown</h3><div class="chart-wrap"><canvas id="chartPriority"></canvas></div></div>
     </div>
     <div class="charts-row">
-      <div class="chart-card"><h3>Ticket type breakdown</h3><canvas id="chartType"></canvas></div>
-      <div class="chart-card"><h3>Tickets created by month</h3><canvas id="chartTrend"></canvas></div>
+      <div class="chart-card"><h3>Ticket type breakdown</h3><div class="chart-wrap"><canvas id="chartType"></canvas></div></div>
+      <div class="chart-card"><h3>Tickets created by month</h3><div class="chart-wrap"><canvas id="chartTrend"></canvas></div></div>
     </div>
 
     ${sectionTitle('Tagging progress')}
@@ -1029,8 +1038,8 @@ function renderAdminDashboard(){
       <div class="kpi"><div class="num">${overallRate}</div><div class="label">Overall accuracy</div></div>
     </div>
     <div class="charts-row">
-      <div class="chart-card"><h3>Tagged tickets by SPOC</h3><canvas id="chartSpoc"></canvas></div>
-      <div class="chart-card"><h3>Accuracy breakdown</h3><canvas id="chartAccuracy"></canvas></div>
+      <div class="chart-card"><h3>Tagged tickets by SPOC</h3><div class="chart-wrap"><canvas id="chartSpoc"></canvas></div></div>
+      <div class="chart-card"><h3>Accuracy breakdown</h3><div class="chart-wrap"><canvas id="chartAccuracy"></canvas></div></div>
     </div>
     ${accuracyPanel()}
   `;
@@ -1110,6 +1119,7 @@ function accuracyPanel(){
       <div class="hint" style="margin-bottom:8px;"><strong>Approval &amp; accuracy tracker</strong> &mdash;
         ${o.approved}/${o.total} tickets approved. Accuracy = Correct &divide; (Correct + Corrected), among tickets a SPOC actually submitted.
       </div>
+      <div class="table-scroll">
       <table>
         <thead><tr><th>SPOC</th><th>Total</th><th>Approved</th><th>Correct on submit</th><th>Corrected by admin</th><th>Admin-tagged</th><th>Accuracy</th></tr></thead>
         <tbody>
@@ -1120,15 +1130,22 @@ function accuracyPanel(){
           </tr>
         </tbody>
       </table>
+      </div>
     </div>
   `;
 }
 
 function drawAdminCharts(){
-  if (typeof Chart === 'undefined') return;
-  const chartTextColor = '#9aa1b8';
-  const gridColor = 'rgba(154,161,184,.12)';
-  const palette = ['#7c8cff', '#b06dfc', '#3ecf8e', '#f2b84b', '#f2604b', '#4bd0f2', '#f24b9e'];
+  if (typeof Chart === 'undefined') {
+    document.querySelectorAll('#adminTabContent .chart-card').forEach(card => {
+      card.innerHTML += '<div class="hint">Charts unavailable (Chart.js failed to load).</div>';
+    });
+    return;
+  }
+  const chartTextColor = '#52514e';
+  const gridColor = 'rgba(11,11,11,.08)';
+  const chartSurface = '#ffffff';
+  const palette = ['#2a78d6', '#eb6834', '#1baf7a', '#eda100', '#e87ba4', '#008300', '#4a3aa7', '#e34948'];
 
   const statusCounts = {};
   TICKETS.forEach(t => { const k = t.status || 'Unknown'; statusCounts[k] = (statusCounts[k]||0)+1; });
@@ -1137,8 +1154,8 @@ function drawAdminCharts(){
   if (ctxStatus) {
     chartStatusInstance = new Chart(ctxStatus, {
       type: 'doughnut',
-      data: { labels: Object.keys(statusCounts), datasets: [{ data: Object.values(statusCounts), backgroundColor: palette, borderColor: '#161a26', borderWidth: 2 }] },
-      options: { responsive: true, plugins: { legend: { position: 'bottom', labels: { color: chartTextColor, boxWidth: 12, padding: 10 } } } }
+      data: { labels: Object.keys(statusCounts), datasets: [{ data: Object.values(statusCounts), backgroundColor: palette, borderColor: chartSurface, borderWidth: 2 }] },
+      options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'bottom', labels: { color: chartTextColor, boxWidth: 12, padding: 10 } } } }
     });
   }
 
@@ -1151,8 +1168,8 @@ function drawAdminCharts(){
   if (ctxPriority) {
     chartPriorityInstance = new Chart(ctxPriority, {
       type: 'bar',
-      data: { labels: priorityLabels, datasets: [{ label: 'Tickets', data: priorityLabels.map(p => priorityCounts[p]||0), backgroundColor: '#f2604b', borderRadius: 6 }] },
-      options: { responsive: true, plugins: { legend: { display: false } },
+      data: { labels: priorityLabels, datasets: [{ label: 'Tickets', data: priorityLabels.map(p => priorityCounts[p]||0), backgroundColor: '#eb6834', borderRadius: 6 }] },
+      options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } },
         scales: { x: { ticks: { color: chartTextColor }, grid: { display: false } },
                   y: { ticks: { color: chartTextColor }, grid: { color: gridColor }, beginAtZero: true } } }
     });
@@ -1166,8 +1183,8 @@ function drawAdminCharts(){
   if (ctxType) {
     chartTypeInstance = new Chart(ctxType, {
       type: 'bar',
-      data: { labels: typeLabels, datasets: [{ label: 'Tickets', data: typeLabels.map(l => typeCounts[l]), backgroundColor: '#7c8cff', borderRadius: 6 }] },
-      options: { indexAxis: 'y', responsive: true, plugins: { legend: { display: false } },
+      data: { labels: typeLabels, datasets: [{ label: 'Tickets', data: typeLabels.map(l => typeCounts[l]), backgroundColor: '#2a78d6', borderRadius: 6 }] },
+      options: { indexAxis: 'y', responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } },
         scales: { x: { ticks: { color: chartTextColor }, grid: { color: gridColor }, beginAtZero: true },
                   y: { ticks: { color: chartTextColor }, grid: { display: false } } } }
     });
@@ -1181,9 +1198,9 @@ function drawAdminCharts(){
   if (ctxTrend) {
     chartTrendInstance = new Chart(ctxTrend, {
       type: 'line',
-      data: { labels: months, datasets: [{ label: 'Created', data: months.map(m => monthCounts[m]), borderColor: '#b06dfc',
-        backgroundColor: 'rgba(176,109,252,.18)', fill: true, tension: .3, pointRadius: 3 }] },
-      options: { responsive: true, plugins: { legend: { display: false } },
+      data: { labels: months, datasets: [{ label: 'Created', data: months.map(m => monthCounts[m]), borderColor: '#4a3aa7',
+        backgroundColor: 'rgba(74,58,167,.14)', fill: true, tension: .3, pointRadius: 3 }] },
+      options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } },
         scales: { x: { ticks: { color: chartTextColor }, grid: { display: false } },
                   y: { ticks: { color: chartTextColor }, grid: { color: gridColor }, beginAtZero: true } } }
     });
@@ -1199,10 +1216,10 @@ function drawAdminCharts(){
     chartSpocInstance = new Chart(ctxSpoc, {
       type: 'bar',
       data: { labels: spocs, datasets: [
-        { label: 'Total tickets', data: totals, backgroundColor: 'rgba(154,161,184,.25)', borderRadius: 6 },
-        { label: 'Tagged', data: taggedCounts, backgroundColor: '#7c8cff', borderRadius: 6 },
+        { label: 'Total tickets', data: totals, backgroundColor: 'rgba(11,11,11,.12)', borderRadius: 6 },
+        { label: 'Tagged', data: taggedCounts, backgroundColor: '#2a78d6', borderRadius: 6 },
       ] },
-      options: { responsive: true, plugins: { legend: { labels: { color: chartTextColor } } },
+      options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { labels: { color: chartTextColor } } },
         scales: { x: { ticks: { color: chartTextColor }, grid: { display: false } },
                   y: { ticks: { color: chartTextColor }, grid: { color: gridColor }, beginAtZero: true } } }
     });
@@ -1215,8 +1232,8 @@ function drawAdminCharts(){
     chartAccuracyInstance = new Chart(ctxAcc, {
       type: 'doughnut',
       data: { labels: ['Correct on submit', 'Corrected by admin', 'Admin-tagged', 'System (legacy)'],
-        datasets: [{ data: [o.correct, o.corrected, o.admin_tagged, o.system], backgroundColor: palette, borderColor: '#161a26', borderWidth: 2 }] },
-      options: { responsive: true, plugins: { legend: { position: 'bottom', labels: { color: chartTextColor, boxWidth: 12, padding: 12 } } } }
+        datasets: [{ data: [o.correct, o.corrected, o.admin_tagged, o.system], backgroundColor: palette, borderColor: chartSurface, borderWidth: 2 }] },
+      options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'bottom', labels: { color: chartTextColor, boxWidth: 12, padding: 12 } } } }
     });
   }
 }
