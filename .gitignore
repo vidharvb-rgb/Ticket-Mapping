@@ -13,3 +13,9 @@ README.md.bak
 .fuse_hidden*
 __pycache__/
 *.pyc
+
+# Untracked local-only files
+build_db.py
+dashboard.py
+spoc_ticket_dashboard.html
+CMS_REBUILD_PROMPT.md
