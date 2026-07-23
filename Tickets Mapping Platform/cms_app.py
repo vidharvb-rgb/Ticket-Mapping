@@ -912,8 +912,8 @@ function renderAdminQueue(){
       <div class="filters">
         <select id="fSpoc"><option value="">All SPOCs</option>${spocs.map(s=>`<option>${esc(s)}</option>`).join('')}</select>
         <select id="fStatus">
+          <option value="" selected>All statuses</option>
           <option value="Submitted">Submitted (needs approval)</option>
-          <option value="">All statuses</option>
           <option>Untagged</option><option>Draft</option><option>Approved</option>
         </select>
       </div>
